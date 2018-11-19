@@ -40,12 +40,13 @@ verificar_ayuda: ; verifica si el parámetro es el parámetro de ayuda
 	
 	pop ESI ; si no hubo error entonces descartamos el valor ingresado en la pila
 	
-	inc EBX ; apuntamos al siguiente caracter
-	cmp BYTE[EBX], 32 ; comprobamos si el último caracter es un espacio
+	; por ahora ponemos '-h' como válido, sin espacio al final, porque eso nos da problemas.
+	;inc EBX ; apuntamos al siguiente caracter
+	;cmp BYTE[EBX], 32 ; comprobamos si el último caracter es un espacio
 	je mostrar_ayuda ; Si es un espacio el último caracter entonces el parámetro era '-h ', procedemos a mostrar la ayuda.
 	
-	push 1 ; ponemos en la pila el error
-	jmp salir ; finalizamos con error ya que el parámetro no finaliza con ' '.
+	;push 1 ; ponemos en la pila el error
+	;jmp salir ; finalizamos con error ya que el parámetro no finaliza con ' '.
 
 mostrar_ayuda:
 	mov ECX, mensaje_ayuda
