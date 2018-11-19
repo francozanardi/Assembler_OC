@@ -12,22 +12,40 @@ salir:
 	int 0x80
 
 imprimir_stdout: ; asume que ECX y EDX tienen los valores válidos.
+	push EAX
+	push EBX 
+	; salvamos los datos de los registros a utilizar
+	
 	mov EAX, 4 ; sys_call = sys_write
 	mov EBX, 1 ; se coloca como descriptor del archivo al stdout
 	int 0x80
+	
+	; restablecemos los valores de los registos utilizados
+	pop EBX
+	pop EAX
 	ret
 
 verificar_ayuda: ; verifica si el parámetro es el parámetro de ayuda
 	cmp BYTE[EBX], 45 ; Verificamos si el primer caracter del segundo parametro es un '-'
 	jne son_metricas ; sino es un gion definitivamente no era el parámetro '-h'
 	
-	inc EBX
-	cmp BYTE[EBX], 104 ; comprobamos si el siguiente caracter es la h
-	jne son_metricas ; si el siguiente no era la h entonces el argumento no era '-h'
-
-	inc EBX
+	push 1 ; ponemos en la pila el posible error
+	; Este error se da cuando la cadena comienza con '-' pero no es '-h '
+	
+	inc EBX ; apuntamos al siguiente caracter
+	cmp BYTE[EBX], 104 ; comprobamos si el siguiente caracter es la 'h'
+	jne salir ; si el siguiente no era la h entonces el argumento no era '-h'.
+	; Notar que la pila ya tiene el número de error de salida.
+	; Finalizamos el programa con error porque asumimos que un archivo válido no puedo comenzar con '-'
+	
+	pop ESI ; si no hubo error entonces descartamos el valor ingresado en la pila
+	
+	inc EBX ; apuntamos al siguiente caracter
 	cmp BYTE[EBX], 32 ; comprobamos si el último caracter es un espacio
 	je mostrar_ayuda ; Si es un espacio el último caracter entonces el parámetro era '-h ', procedemos a mostrar la ayuda.
+	
+	push 1 ; ponemos en la pila el error
+	jmp salir ; finalizamos con error ya que el parámetro no finaliza con ' '.
 
 mostrar_ayuda:
 	mov ECX, mensaje_ayuda
