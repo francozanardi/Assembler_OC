@@ -44,7 +44,7 @@ section .data
 	arch_temp	db	"metricas.tmp",0	; Caracter nulo al final
 	arch_temp_len	EQU	$-arch_temp
 
-	fhandler	dw	0
+	fhandler	dd	1 ;cambie a 16bits, porque así hizo Fede, y por defecto puse la consola.
 	flen		dd	0
 
 
@@ -135,6 +135,62 @@ mostrar_ayuda:
 	jmp salir
 
 
+; Limpia la cadena llenandola de caracteres nulo.
+limpiar_cadena:
+	; Preservar el contenido de los registros EAX y EBX
+	push EAX
+	push EBX
+
+	; Iterar desde EAX=(max_len_linea - 1) hasta 0
+	mov EAX, max_len_linea
+	_seguirLimpiando:
+		dec EAX			; EAX --
+
+		mov EBX, cadena		; Calcular la posicion del caracterer, cadena + offset
+		add EBX, EAX
+
+		mov [EBX], BYTE 0	; Ponerle el caracter nulo
+		cmp EAX, 0		; Si EAX != 0, continuar iterando
+		jne _seguirLimpiando
+
+	; Devolver el valor de los registros EAX y EBX
+	pop EBX
+	pop EAX
+
+	; Volver al metodo que llamo
+	ret
+
+
+
+; Crea el archivo temporal
+;
+; Deja guardado su manejador en 'fhandler'
+crear_arch_temp:
+	; Guardar los contenidos de los registros utilizados en la pila
+	push EAX
+	push EBX
+	push ECX
+
+	; Crear el archivo temporal
+	mov EAX, sys_creat
+	mov EBX, arch_temp
+	mov ECX, 0777; acá van los permisos en realidad. arch_temp_len
+	int 0x80
+
+	; falta controlar que eax sea mayor a 0.
+
+	
+	; Guarda la direccion del archivo en 'fhandler'
+	mov [fhandler], EAX
+
+	; Reestablecer el valor de los registros
+	pop ECX
+	pop EBX
+	pop EAX
+
+	; Volver al que llamo
+	ret
+
 
 ; Modo consola entrada, consola salida.
 ; El usuario debe escribir texto por consola (finalizando su input con Ctrl D), luego se calculan las métricas
@@ -165,19 +221,19 @@ consEntrada_consSalida:
 		mov AL, BYTE[ECX]	; Obtener el caracter leido en AL
 
 		; IF: Si el usuario ingreso un salto de linea
-		cmp AL, BYTE nln
+		cmp AL, nln
 		jne _continuar		; Saltar al bloque ELSE
 
 		; Bloque THEN, El usuario ingreso un salto de linea, vamos a escribir en un archivo temporal.
-		call append_arch_temp	; 								ESTA LINEA ESCRIBE, PERO EN LA UNICA PASADA
+		;call append_arch_temp	; 								ESTA LINEA ESCRIBE, PERO EN LA UNICA PASADA
 		inc EDI			; Aumentar el contador de lineas
-		mov [flen], ESI		; Guardar la longitud de la linea en 'flen'
+		mov [flen], ESI		; Guardar la longitud de la linea en 'flen' 			
 		mov ESI, 0		; Resetear el contador de caracteres
-		;call append_arch_temp	; Escribir la linea en el archivo temporal 			(ESTA LINEA NO HACE NADA, NO SE POR QUE)
-		call limpiar_cadena	; Limpiar el buffer
+		call append_arch_temp	; Escribir la linea en el archivo temporal 			(ESTA LINEA NO HACE NADA, NO SE POR QUE)
+		call limpiar_cadena	; Limpiar el buffer 						ES NECESARIO LIMPIAR LA CADENA? POR QUÉ NO SOBREESCRIBIMOS?
 		cmp EDI, max_lineas	; Verificamos que el archivo no se haya excedido del maximo de lineas
 		je _demasiadasLineas	; En caso de exceso, terminacion erronea
-		jne _loop
+		jne _loop		; 								DIRECTAMENTE JMP _loop SERÍA LO MISMO.
 
 		; Bloque ELSE, El usuario NO ingreso un salto de linea
 		_continuar:
@@ -219,19 +275,7 @@ append_arch_temp:
 	mov EAX, sys_write
 	mov EBX, [fhandler]
 	mov ECX, cadena
-	mov EDX, 1;[flen]	: USAMOS 1 EN LUGAR DE FLEN PARA TESTEAR
-	int 0x80
-
-	mov EAX, sys_write
-	mov EBX, [fhandler]
-	mov ECX, cadena
-	mov EDX, 1;[flen]
-	int 0x80
-
-	mov EAX, sys_write
-	mov EBX, [fhandler]
-	mov ECX, cadena
-	mov EDX, 1;[flen]
+	mov EDX, [flen]	
 	int 0x80
 
 	; Restaurar el valor de los registros
@@ -241,34 +285,6 @@ append_arch_temp:
 	pop EAX
 
 	; Volver al metodo que llamo
-	ret
-
-
-
-; Crea el archivo temporal
-;
-; Deja guardado su manejador en 'fhandler'
-crear_arch_temp:
-	; Guardar los contenidos de los registros utilizados en la pila
-	push EAX
-	push EBX
-	push ECX
-
-	; Crear el archivo temporal
-	mov EAX, sys_creat
-	mov EBX, arch_temp
-	mov ECX, arch_temp_len
-	int 0x80
-
-	; Guarda la direccion del archivo en 'fhandler'
-	mov [fhandler], EAX
-
-	; Reestablecer el valor de los registros
-	pop ECX
-	pop EBX
-	pop EAX
-
-	; Volver al que llamo
 	ret
 
 
@@ -297,35 +313,6 @@ borrar_arch_temp:
 
 	; Volver al que llamo
 	ret
-
-
-
-; Limpia la cadena llenandola de caracteres nulo.
-limpiar_cadena:
-	; Preservar el contenido de los registros EAX y EBX
-	push EAX
-	push EBX
-
-	; Iterar desde EAX=(max_len_linea - 1) hasta 0
-	mov EAX, max_len_linea
-	_seguirLimpiando:
-		dec EAX			; EAX --
-
-		mov EBX, cadena		; Calcular la posicion del caracterer, cadena + offset
-		add EBX, EAX
-
-		mov [EBX], BYTE 0	; Ponerle el caracter nulo
-
-		cmp EAX, 0		; Si EAX != 0, continuar iterando
-		jnz _seguirLimpiando
-
-	; Devolver el valor de los registros EAX y EBX
-	pop EBX
-	pop EAX
-
-	; Volver al metodo que llamo
-	ret
-
 
 
 archEntrada_consSalida:
