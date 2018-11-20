@@ -209,7 +209,7 @@ consEntrada_consSalida:
 		mov EBX, stdin
 		mov ECX, cadena		; Guardar en cadena + offset
 		add ECX, ESI		; Sumamos el offset.
-		mov EDX, 1
+		mov EDX, 1		; Leemos de a un caracter
 		int 0x80
 
 		inc ESI			; Aumentamos el contador de caracteres leidos.
@@ -224,28 +224,33 @@ consEntrada_consSalida:
 		cmp AL, nln
 		jne _continuar		; Saltar al bloque ELSE
 
-		; Bloque THEN, El usuario ingreso un salto de linea, vamos a escribir en un archivo temporal.
-		;call append_arch_temp	; 								ESTA LINEA ESCRIBE, PERO EN LA UNICA PASADA
-		inc EDI			; Aumentar el contador de lineas
-		mov [flen], ESI		; Guardar la longitud de la linea en 'flen' 			
-		mov ESI, 0		; Resetear el contador de caracteres
-		call append_arch_temp	; Escribir la linea en el archivo temporal 			(ESTA LINEA NO HACE NADA, NO SE POR QUE)
-		call limpiar_cadena	; Limpiar el buffer 						ES NECESARIO LIMPIAR LA CADENA? POR QUÉ NO SOBREESCRIBIMOS?
-		cmp EDI, max_lineas	; Verificamos que el archivo no se haya excedido del maximo de lineas
-		je _demasiadasLineas	; En caso de exceso, terminacion erronea
-		jne _loop		; 								DIRECTAMENTE JMP _loop SERÍA LO MISMO.
+		; Bloque THEN, El usuario ingreso un salto de linea, vamos a escribir en un archivo temporal
+		inc EDI				; Aumenta el contador de lineas
+		call escribir_linea_buffer	;
+		cmp EDI, max_lineas		; Verificamos que el archivo no se haya excedido del maximo de lineas
+		je _demasiadasLineas		; En caso de exceso, terminacion erronea
+		jmp _loop
 
 		; Bloque ELSE, El usuario NO ingreso un salto de linea
 		_continuar:
 		cmp AL, 0		; Caracter nulo = EOF = Ctrl D
 		jne _loop		; Mientras que no se lea el caracter nulo, continuar leyendo
 	
+
+	dec ESI
+	call escribir_linea_buffer
+
 	; Al finalizar de leer (exitosamente)
-	mov EAX, sys_write
-	mov EBX, stdout
-	mov ECX, cadena
-	mov EDX, max_len_linea
-	int 0x80
+	;mov EAX, sys_write
+	;mov EBX, stdout
+	;mov ECX, cadena
+	;mov EDX, max_len_linea
+	;int 0x80
+	call cerrar_arch_temp
+	;call borrar_arch_temp
+
+	push exit_success
+	jmp salir
 
 	; Se ingresaron mas caracteres de los permitidos (buffer overflow)
 	_bufferOverflow:
@@ -255,9 +260,20 @@ consEntrada_consSalida:
 		jmp _salirFracaso
 	
 	_salirFracaso
-		call borrar_arch_temp
+		call cerrar_arch_temp	; Cerrar el archivo temporal
+		;call borrar_arch_temp	; Borrarlo
 		push exit_fail
 		jmp salir
+
+
+; Asume que 
+escribir_linea_buffer:
+	mov [flen], ESI		; Guardar la longitud de la linea en 'flen' 			
+	mov ESI, 0		; Resetear el contador de caracteres
+	call append_arch_temp	; Escribir la linea en el archivo temporal
+	call limpiar_cadena	; Limpiamos el buffer - al remover esta linea, deja de funcionar correctamente el Ctrl-D (no se por que)
+	ret
+
 
 
 
@@ -271,7 +287,7 @@ append_arch_temp:
 	push ECX
 	push EDX
 
-	; Escribir en el archivo el buffer (LO HACEMOS TRES VECES PARA TESTEAR)
+	; Escribir en el archivo el buffer
 	mov EAX, sys_write
 	mov EBX, [fhandler]
 	mov ECX, cadena
@@ -289,11 +305,11 @@ append_arch_temp:
 
 
 
-; Borrar el archivo temporal
+; Cierrar el manejador del archivo temporal
 ;
-; Asume que su manejador esta guardado en 'fhandler' para cerrarlo
-borrar_arch_temp:
-	; Guardar los contenidos de los registros utilizados en la pila
+; Se asume que esta abierto y guardada su referencia en 'fhandler'
+cerrar_arch_temp:
+	; Guardar el contenido de los registros en la pila
 	push EAX
 	push EBX
 
@@ -301,6 +317,23 @@ borrar_arch_temp:
 	mov EAX, sys_close
 	mov EBX, [fhandler]
 	int 0x80
+
+	; Restablecer el valor de los registros
+	pop EBX
+	pop EAX
+
+	; Volver al que llamo
+	ret
+
+
+
+; Borrar el archivo temporal
+;
+; Asume que su manejador esta guardado en 'fhandler' para cerrarlo
+borrar_arch_temp:
+	; Guardar los contenidos de los registros utilizados en la pila
+	push EAX
+	push EBX
 
 	; Borrar el archivo temporal
 	mov EAX, sys_unlink
@@ -313,6 +346,7 @@ borrar_arch_temp:
 
 	; Volver al que llamo
 	ret
+
 
 
 archEntrada_consSalida:
