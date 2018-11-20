@@ -447,53 +447,6 @@ imprimir_stdout: ; asume que ECX y EDX tienen los valores válidos.
 
 
 
-; Verifica si el parámetro es el parámetro de ayuda
-;
-; Asume que el registro EAX contiene la cantidad de argumentos recibidos al ejecutarse el programa.
-; Asume que el registro EBX contiene un puntero a un argumento string.
-verificar_ayuda:
-	cmp BYTE[EBX], 45	; Verificamos si el primer caracter del segundo parametro es un '-'
-	jne son_metricas	; sino es un gion definitivamente no era el parámetro '-h'
-
-	push exit_fail		; ponemos en la pila el posible error
-						; Este error se da cuando el segundo argumento no es estrictamente igual a "-h" (se admiten espacios luego y antes),
-						; también se produce si hay argumentos de sobra.
-
-	inc EBX				; apuntamos al siguiente caracter
-	cmp BYTE[EBX], 104	; comprobamos si el siguiente caracter es la 'h'
-	jne salir			; si el siguiente no era la h entonces el argumento no era '-h'.
-						; Notar que la pila ya tiene el número de error de salida.
-						; Finalizamos el programa con error porque asumimos que un archivo válido no puedo comenzar con '-'
-
-	; Una vez leido "-h" queda verificar que luego de la 'h' esté el caracter nulo '\0'
-	inc EBX				; Apuntamos al siguiente caracter
-	cmp BYTE[EBX], 0	; Verificamos si es el caracter nulo
-	jne salir			; En caso de que no fuese el caracter nulo, el parámetro es inválido (pues no es '-h')
-
-	; Por último, en caso de ser válido el formato, la cantidad de parámetros debe ser 2 (el propio programa y '-h')
-	cmp EAX, 2			; Si hay más de 2 argumentos, es una ejecución inválida.
-	jne salir
-
-	pop ESI ; si no hubo error entonces descartamos el valor ingresado en la pila
-
-	; por ahora ponemos '-h' como válido, sin espacio al final, porque eso nos da problemas.
-	;inc EBX ; apuntamos al siguiente caracter
-	;cmp BYTE[EBX], 32 ; comprobamos si el último caracter es un espacio
-	je mostrar_ayuda ; Si es un espacio el último caracter entonces el parámetro era '-h ', procedemos a mostrar la ayuda.
-
-	;push 1 ; ponemos en la pila el error
-	;jmp salir ; finalizamos con error ya que el parámetro no finaliza con ' '.
-
-
-
-mostrar_ayuda:
-	mov ECX, mensaje_ayuda
-	mov EDX, longitud_ayuda
-	call imprimir_stdout
-	push exit_success
-	jmp salir
-
-
 ; Limpia la cadena llenandola de caracteres nulo.
 limpiar_cadena:
 	; Preservar el contenido de los registros EAX y EBX
@@ -723,17 +676,113 @@ borrar_arch_temp:
 
 
 
+; Recibe en EBX la direccion del archivo de entrada.
 archEntrada_consSalida:
-	push exit_fail
+	; Abrir el archivo pasado por parametro (para la entrada)
+	mov EAX, sys_open
+	mov ECX, 0	; Modo solo lectura
+	mov EDX, 0777	; Permisos
+	int 0x80
+
+	; Guardar la referencia al archivo en fhandler
+	mov [fhandler], EAX
+
+	pop EBX; Cargamos el segundo argumento
+	; Abrir el archivo pasado por segundo parametro (para la salida)
+	mov EAX, sys_open
+	mov ECX, 0
+	mov EDX, 0777
+	int 0x80
+	; Cargar la referencia a la consola en fhandlerout
+	mov EAX, stdout
+	mov [fhandlerout], EAX
+
+	; Calcular las metricas
+	call calcular_metricas
+
+	; Finalizar exitosamente
+	push exit_success
 	jmp salir
 
 	
 	
+; Recibe en EBX la direccion del archivo de entrada
+; Recibe en ECX la direccion del archivo de salida
 archEntrada_archSalida:
-	push exit_fail
+	push ECX	; Guardamos el parametro ECX
+
+	; Abrir el archivo pasado por parametro
+	mov EAX, sys_open
+	mov ECX, 0	; Modo solo lectura
+	mov EDX, 0777	; Permisos
+	int 0x80
+
+	; Guardar la referencia al archivo en fhandler
+	mov [fhandler], EAX
+
+	pop EBX		; Recuperamos el parametro ECX
+
+	; Abrir el archivo pasado por parametro
+	mov EAX, sys_open
+	mov ECX, 0x41	; Modo (solo escritura OR crear ; falta agregar el truncate ya que sino, cuando el archivo esta creado se sobrescribe lo utilizado pero no se borra lo que no se utiliza.)
+	mov EDX, 0777	; Permisos
+	int 0x80
+
+	; Guardar la referencia al archivo en fhandler
+	mov [fhandlerout], EAX
+
+	; Calcular las metricas
+	call calcular_metricas
+
+	; Finalizar exitosamente
+	push exit_success
 	jmp salir
 
-	
+
+
+
+; Verifica si el parámetro es el parámetro de ayuda
+;
+; Asume que el registro EAX contiene la cantidad de argumentos recibidos al ejecutarse el programa.
+; Asume que el registro EBX contiene un puntero a un argumento string.
+verificar_ayuda:
+	cmp BYTE[EBX], 45	; Verificamos si el primer caracter del segundo parametro es un '-'
+	jmp son_metricas	; sino es un gion definitivamente no era el parámetro '-h'
+
+	push exit_fail		; ponemos en la pila el posible error
+						; Este error se da cuando el segundo argumento no es estrictamente igual a "-h" (se admiten espacios luego y antes),
+						; también se produce si hay argumentos de sobra.
+
+	inc EBX				; apuntamos al siguiente caracter
+	cmp BYTE[EBX], 104	; comprobamos si el siguiente caracter es la 'h'
+	jne salir			; si el siguiente no era la h entonces el argumento no era '-h'.
+						; Notar que la pila ya tiene el número de error de salida.
+						; Finalizamos el programa con error porque asumimos que un archivo válido no puedo comenzar con '-'
+
+	; Una vez leido "-h" queda verificar que luego de la 'h' esté el caracter nulo '\0'
+	inc EBX				; Apuntamos al siguiente caracter
+	cmp BYTE[EBX], 0	; Verificamos si es el caracter nulo
+	jne salir			; En caso de que no fuese el caracter nulo, el parámetro es inválido (pues no es '-h')
+
+	; Por último, en caso de ser válido el formato, la cantidad de parámetros debe ser 2 (el propio programa y '-h')
+	cmp EAX, 2			; Si hay más de 2 argumentos, es una ejecución inválida.
+	jne salir
+
+	pop ESI ; si no hubo error entonces descartamos el valor ingresado en la pila
+
+	je mostrar_ayuda ; Si es un espacio el último caracter entonces el parámetro era '-h ', procedemos a mostrar la ayuda.
+
+
+
+
+mostrar_ayuda:
+	mov ECX, mensaje_ayuda
+	mov EDX, longitud_ayuda
+	call imprimir_stdout
+	push exit_success
+	jmp salir
+
+
 	
 _start:
 	pop EAX ; cantidad de argumentos
@@ -751,6 +800,7 @@ _start:
 		cmp EAX, 2
 		je archEntrada_consSalida ; subrutina para actuar con un parámetro.
 
+		pop ECX
 		cmp EAX, 3
 		je archEntrada_archSalida ; subrutina para dos parámetros.
 
