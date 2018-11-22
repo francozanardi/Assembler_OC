@@ -49,8 +49,8 @@ section .data
 	arch_temp	db	"metricas.tmp",0	; Caracter nulo al final
 	arch_temp_len	EQU	$-arch_temp
 
-	fhandler	dd	stdin
-	fhandlerout	dd	stdout
+	fdescriptor	dd	stdin
+	fdescriptor_out	dd	stdout
 	flen		dd	0
 
 
@@ -98,7 +98,7 @@ es_letra:
 
 ; Lee un caracter del archivo que contiene el texto al cual calcularle las metricas
 ; 
-; Asume que en 'fhandler' esta cargado el manejador.
+; Asume que en 'fdescriptor' esta cargado el descriptor.
 ; Devuelve el valor en ESI.
 leer_caracter:
 	; Preserva los valores de los registros utilizando la pila
@@ -109,7 +109,7 @@ leer_caracter:
 
 	; Lee un unico caracter del archivo
 	mov EAX, sys_read 	; sys_call = sys_exit
-	mov EBX, [fhandler]	; EBX contiene el descriptor del archivo.
+	mov EBX, [fdescriptor]	; EBX contiene el descriptor del archivo.
 	mov ECX, fchar 		; ECX contiene la dirección en memoria en donde se guardará los bytes leídos del archivo.
 	mov EDX, 1		; EDX coniene la cantidad de bytes a leer.
 	int 0x80
@@ -150,7 +150,7 @@ leer_caracter:
 
 
 
-; Recibe un numero en EAX y lo imprime en 'fhandlerout'
+; Recibe un numero en EAX y lo imprime en 'fdescriptor_out'
 imprimir_numero:
 	push EBX; Preservamos el valor del registro EBX
 	push ECX
@@ -194,7 +194,7 @@ imprimir_numero:
 		mov [fchar], CL		; ponemos en fchar el código ascii del espacio ' '.
 		mov ECX, fchar		; ponemos en ECX la dirección de memoria que contiene el caracter a imprimir, en este caso el espacio.
 		; Notar que EDX ya es igual 1
-		call imprimir		; delegamos en la rutina que imprimir en el archivo con el descriptor almacenado en 'fhandlerout'.
+		call imprimir		; delegamos en la rutina que imprimir en el archivo con el descriptor almacenado en 'fdescriptor_out'.
 		jmp .salir
 
 	
@@ -234,7 +234,7 @@ mostrar_resultados:
 
 ; Calcular metricas
 ;
-; Se asume que 'fhandler' ya tiene el descriptor del archivo de entrada y que 'fhandlerout' contiene el descriptor del archivo de salida.
+; Se asume que 'fdescriptor' ya tiene el descriptor del archivo de entrada y que 'fdescriptor_out' contiene el descriptor del archivo de salida.
 ; 
 calcular_metricas:
 	; Preservar el valor de los registros utilizando la pila
@@ -444,14 +444,14 @@ calcular_metricas:
 	ret
 
 
-; Imprime en el archivo cuyo descriptor está almacenado en 'fhandlerout'.
+; Imprime en el archivo cuyo descriptor está almacenado en 'fdescriptor_out'.
 imprimir: ; asume que ECX y EDX tienen los valores válidos.
 	push EAX
 	push EBX 
 	; salvamos los datos de los registros a utilizar
 
 	mov EAX, sys_write	; sys_call = sys_write
-	mov EBX, [fhandlerout]	; se coloca el descriptor del archivo.
+	mov EBX, [fdescriptor_out]	; se coloca el descriptor del archivo.
 	int 0x80
 
 				; Evaluamos si la llamada al sistema retornó un error en EAX.
@@ -476,7 +476,7 @@ imprimir: ; asume que ECX y EDX tienen los valores válidos.
 
 ; Crea el archivo temporal
 ;
-; Deja guardado su manejador en 'fhandler'
+; Deja guardado su descriptor en 'fdescriptor'
 crear_arch_temp:
 	; Guardar los contenidos de los registros utilizados en la pila
 	push EAX
@@ -498,8 +498,8 @@ crear_arch_temp:
 		jmp salir ; realizamos la llamada al sistema sys_exit con el error correspondiente.
 
 	.salir
-		; Guarda la direccion del archivo en 'fhandler'
-		mov [fhandler], EAX
+		; Guarda la direccion del archivo en 'fdescriptor'
+		mov [fdescriptor], EAX
 
 		; Reestablecer el valor de los registros
 		pop ECX
@@ -563,7 +563,7 @@ consEntrada_consSalida:
 		call escribir_linea_buffer
 	
 		mov AL, stdout
-		mov [fhandlerout], AL 		; esto puede causar problemas. AL 1 byte [fhandlerout] son 4bytes, solo se reemplaza el primer byte, creo.
+		mov [fdescriptor_out], AL 		; esto puede causar problemas. AL 1 byte [fdescriptor_out] son 4bytes, solo se reemplaza el primer byte, creo.
 
 						; No veo necesario cerrar y abrir de nuevo el archivo temporal, el descriptor seguirá siendo el mismo.
 		call cerrar_archivo
@@ -578,7 +578,7 @@ consEntrada_consSalida:
 		cmp EAX, 0
 		jl .openfile_error
 		
-		mov [fhandler], EAX
+		mov [fdescriptor], EAX
 
 		call calcular_metricas
 		call cerrar_archivo
@@ -619,7 +619,7 @@ escribir_linea_buffer:
 
 ; Escribe el contenido de 'cadena' al final del archivo
 ;
-; Se asume que el manejador del archivo esta en 'fhandler'
+; Se asume que el descriptor del archivo esta en 'fdescriptor'
 append_arch_temp:
 	; Preservar el valor de los registros
 	push EAX
@@ -630,7 +630,7 @@ append_arch_temp:
 
 	; Escribir en el archivo el buffer
 	mov EAX, sys_write
-	mov EBX, [fhandler]
+	mov EBX, [fdescriptor]
 	mov ECX, cadena
 	mov EDX, [flen]	
 	int 0x80
@@ -654,7 +654,7 @@ append_arch_temp:
 
 
 
-; Cierrar el archivo cuyo descriptor está almacenado en fhandler.
+; Cierrar el archivo cuyo descriptor está almacenado en fdescriptor.
 cerrar_archivo:
 	; Guardar el contenido de los registros en la pila
 	push EAX
@@ -662,7 +662,7 @@ cerrar_archivo:
 
 	; Cerrar el archivo
 	mov EAX, sys_close ; sys_call = sys_close
-	mov EBX, [fhandler] 
+	mov EBX, [fdescriptor] 
 	int 0x80
 
 	cmp EAX, 0
@@ -684,7 +684,7 @@ cerrar_archivo:
 
 ; Borrar el archivo temporal
 ;
-; Asume que su manejador esta guardado en 'fhandler' para cerrarlo
+; Asume que su descriptor esta guardado en 'fdescriptor' para cerrarlo
 borrar_arch_temp:
 	; Guardar los contenidos de los registros utilizados en la pila
 	push EAX
@@ -723,12 +723,12 @@ archEntrada_consSalida:
 	cmp EAX, 0
 	jl .error_entrada
 
-	; Guarda el descriptor del archivo en fhandler
-	mov [fhandler], EAX
+	; Guarda el descriptor del archivo en fdescriptor
+	mov [fdescriptor], EAX
 
-	; Cargar el descriptor del stdout en fhandlerout
+	; Cargar el descriptor del stdout en fdescriptor_out
 	mov EAX, stdout
-	mov [fhandlerout], EAX
+	mov [fdescriptor_out], EAX
 
 	; Calcular las metricas
 	call calcular_metricas
@@ -736,10 +736,6 @@ archEntrada_consSalida:
 
 	.error_entrada:
 		push exit_fail_inputfile
-		jmp salir
-	
-	.error_salida:
-		push exit_fail_outputfile
 		jmp salir
 
 	.salir_exitosamente:
@@ -761,10 +757,10 @@ archEntrada_archSalida:
 	int 0x80
 
 	cmp EAX, 0
-	jle .error_entrada
+	jl .error_entrada
 
-	; Guarda el descriptor del archivo en fhandler
-	mov [fhandler], EAX
+	; Guarda el descriptor del archivo en fdescriptor
+	mov [fdescriptor], EAX
 
 	pop EBX		; Recuperamos el parametro ECX
 
@@ -776,10 +772,10 @@ archEntrada_archSalida:
 	int 0x80
 
 	cmp EAX, 0
-	jle .error_salida
+	jl .error_salida
 
-	; Guardar el descriptor del archivo en fhandler
-	mov [fhandlerout], EAX
+	; Guardar el descriptor del archivo en fdescriptor
+	mov [fdescriptor_out], EAX
 
 	; Calcular las metricas
 	call calcular_metricas
@@ -840,7 +836,7 @@ mostrar_ayuda:
 	mov EDX, longitud_ayuda
 
 	mov EAX, stdout
-	mov [fhandler], EAX 		; Colocamos como descriptor stdout para que se imprima por pantalla.
+	mov [fdescriptor], EAX 		; Colocamos como descriptor stdout para que se imprima por pantalla.
 	call imprimir
 
 	push exit_success
