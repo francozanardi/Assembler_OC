@@ -447,33 +447,6 @@ imprimir_stdout: ; asume que ECX y EDX tienen los valores válidos.
 
 
 
-; Limpia la cadena llenandola de caracteres nulo.
-limpiar_cadena:
-	; Preservar el contenido de los registros EAX y EBX
-	push EAX
-	push EBX
-
-	; Iterar desde EAX=(max_len_linea - 1) hasta 0
-	mov EAX, max_len_linea
-	_seguirLimpiando:
-		dec EAX			; EAX --
-
-		mov EBX, cadena		; Calcular la posicion del caracterer, cadena + offset
-		add EBX, EAX
-
-		mov [EBX], BYTE 0	; Ponerle el caracter nulo
-		cmp EAX, 0		; Si EAX != 0, continuar iterando
-		jne _seguirLimpiando
-
-	; Devolver el valor de los registros EAX y EBX
-	pop EBX
-	pop EAX
-
-	; Volver al metodo que llamo
-	ret
-
-
-
 ; Crea el archivo temporal
 ;
 ; Deja guardado su manejador en 'fhandler'
@@ -486,7 +459,7 @@ crear_arch_temp:
 	; Crear el archivo temporal
 	mov EAX, sys_creat
 	mov EBX, arch_temp
-	mov ECX, 0777; acá van los permisos en realidad. arch_temp_len
+	mov ECX, 0777; permisos del archivo creado.
 	int 0x80
 
 	; falta controlar que eax sea mayor a 0.
@@ -513,10 +486,9 @@ consEntrada_consSalida:
 	mov EDI, 0 ; Contador lineas]
 
 	call crear_arch_temp
-	call limpiar_cadena
 
 	; Bucle de lectura de caracteres
-	_loop:
+	.loop:
 		mov EAX, sys_read	; Leer un caracter por consola.
 		mov EBX, stdin
 		mov ECX, cadena		; Guardar en cadena + offset
@@ -528,77 +500,80 @@ consEntrada_consSalida:
 
 		cmp ESI, max_len_linea	; Si el contador de caracteres es igual al maximo posible, quiere decir que
 					; ya nos desbordamos del buffer.
-		je _bufferOverflow
+		je .bufferOverflow
 
-		mov AL, BYTE[ECX]	; Obtener el caracter leido en AL
+		cmp EAX, 0		; Si el read leyó 0 bytes, entonces signfica que el usuario escribió <ctrl+d>
+					; sin ningún byte para procesar. Es decir, el usuario escribió caracteres seguidos de <ctrl+d> (o <enter>)
+					; y luego de ello escribió <ctrl+d> por lo que el programa recibió en la última linea 0 bytes para procesar,
+					; por lo cual el read retornará 0 en EAX.
+
+		je .fin_loop		; Como se ingresó ctrl+d finalizamos el loop.
+
+		mov CL, BYTE[ECX]	; Obtener el caracter leido en CL
 
 		; IF: Si el usuario ingreso un salto de linea
-		cmp AL, nln
-		jne _continuar		; Saltar al bloque ELSE
+		cmp CL, nln
+		jne .loop		; Saltar al bloque ELSE
 
 		; Bloque THEN, El usuario ingreso un salto de linea, vamos a escribir en un archivo temporal
 		inc EDI				; Aumenta el contador de lineas
 		call escribir_linea_buffer	;
 		cmp EDI, max_lineas		; Verificamos que el archivo no se haya excedido del maximo de lineas
-		je _demasiadasLineas		; En caso de exceso, terminacion erronea
-		jmp _loop
-
-		; Bloque ELSE, El usuario NO ingreso un salto de linea
-		_continuar:
-		cmp AL, 0x0		; Caracter nulo = EOF = Ctrl D
-		jne _loop		; Mientras que no se lea el caracter nulo, continuar leyendo
+		je .demasiadasLineas		; En caso de exceso, terminacion erronea
+		jne .loop
 	
 
-	dec ESI
-	call escribir_linea_buffer
+	.fin_loop:
+		dec ESI				; Al salir del loop decrementamos el registro ESI que contiene la cantidad de caracteres leídos
+						; en la última linea, ya que se utilizará como offset.
+		call escribir_linea_buffer
 	
-	mov AL, stdout
-	mov [fhandlerout], AL
-	call cerrar_arch_temp
+		mov AL, stdout
+		mov [fhandlerout], AL 		; esto puede causar problemas. AL 1 byte [fhandlerout] son 4bytes, solo se reemplaza el primer byte, creo.
 
-	mov EAX, sys_open
-	mov EBX, arch_temp
-	mov ECX, 0		; solo lectura
-	mov EDX, 0777
-	int 0x80
+						; No veo necesario cerrar y abrir de nuevo el archivo temporal, el descriptor seguirá siendo el mismo.
+		call cerrar_archivo
+		
+		; Abrimos el archivo nuevamente con modo solo lectura.
+		mov EAX, sys_open
+		mov EBX, arch_temp
+		mov ECX, 0		; solo lectura
+		mov EDX, 0777
+		int 0x80
 
 
-	; asumimos que eax es mayor a 0
+		; asumimos que eax es mayor a 0
 
-	mov [fhandler], EAX
+		mov [fhandler], EAX
 
-	call calcular_metricas
+		call calcular_metricas
 	
-	mov EAX, sys_close
-	mov EBX, [fhandler]
-	int 0x80
 
-	;call cerrar_arch_temp
-	;call borrar_arch_temp
+		call cerrar_archivo
+		call borrar_arch_temp
 
-	push exit_success
-	jmp salir
+		push exit_success
+		jmp salir
 
 	; Se ingresaron mas caracteres de los permitidos (buffer overflow)
-	_bufferOverflow:
-		jmp _salirFracaso
+	.bufferOverflow:
+		jmp .salirFracaso
 	
-	_demasiadasLineas:
-		jmp _salirFracaso
+	.demasiadasLineas:
+		jmp .salirFracaso
 	
-	_salirFracaso
-		call cerrar_arch_temp	; Cerrar el archivo temporal
-		;call borrar_arch_temp	; Borrarlo
+	.salirFracaso
+		call cerrar_archivo	; Cerrar el archivo temporal
+		call borrar_arch_temp	; Borrarlo
 		push exit_fail
 		jmp salir
 
 
 ; Asume que 
 escribir_linea_buffer:
-	mov [flen], ESI		; Guardar la longitud de la linea en 'flen' 			
+	mov [flen], ESI		; Guardar la longitud de la linea en 'flen'			
 	mov ESI, 0		; Resetear el contador de caracteres
 	call append_arch_temp	; Escribir la linea en el archivo temporal
-	call limpiar_cadena	; Limpiamos el buffer - al remover esta linea, deja de funcionar correctamente el Ctrl-D (no se por que)
 	ret
 
 
@@ -627,29 +602,27 @@ append_arch_temp:
 	pop EBX
 	pop EAX
 
-	; Volver al metodo que llamo
+	;  Regresa a la instrucción posterior de la invocación de 'append_arch_temp'.
 	ret
 
 
 
-; Cierrar el manejador del archivo temporal
-;
-; Se asume que esta abierto y guardada su referencia en 'fhandler'
-cerrar_arch_temp:
+; Cierrar el archivo cuyo descriptor está almacenado en fhandler.
+cerrar_archivo:
 	; Guardar el contenido de los registros en la pila
 	push EAX
 	push EBX
 
 	; Cerrar el archivo
-	mov EAX, sys_close
-	mov EBX, [fhandler]
+	mov EAX, sys_close ; sys_call = sys_close
+	mov EBX, [fhandler] 
 	int 0x80
 
 	; Restablecer el valor de los registros
 	pop EBX
 	pop EAX
 
-	; Volver al que llamo
+	; Regresa a la instrucción posterior de la invocación de 'cerrar_arch_temp'.
 	ret
 
 
