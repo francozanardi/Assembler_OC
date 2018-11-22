@@ -31,7 +31,9 @@
 %define nln			0x0A
 
 %define exit_success		0x00
-%define exit_fail		0x01
+%define exit_fail_inputfile	0x01
+%define exit_fail_outputfile	0x02
+%define exit_fail		0x03
 
 %define deteccion_eof		0x100
 
@@ -61,38 +63,36 @@ section .text
 	global _start
 
 
-
 salir: 
 	mov EAX, sys_exit	; sys_call = sys_exit
 	pop EBX			; obtenemos el estado de salida, si hay error o no.
 	int 0x80
 
 
-
 ; Asume que ESI contiene un caracter, devuelve 1 si es una letra, 0 en caso contrario.
 es_letra:
 	cmp ESI, 65 ; 'A'
-	jl _noesletra
+	jl .no_es_letra
 
 	cmp ESI, 90 ; 'Z'
-	jle _esletra
+	jle .es_letra
 
 	cmp ESI, 97 ; 'a'
-	jl _noesletra
+	jl .no_es_letra
 
 	cmp ESI, 122 ; 'z'
-	jle _esletra
+	jle .es_letra
 
 
-	_noesletra:
-	mov ESI, 0
-	jmp _salir
+	.no_es_letra:
+		mov ESI, 0
+		jmp .salir
 
-	_esletra:
-	mov ESI, 1
+	.es_letra:
+		mov ESI, 1
 
-	_salir:
-	ret
+	.salir:
+		ret
 
 
 
@@ -108,31 +108,45 @@ leer_caracter:
 	push EDX
 
 	; Lee un unico caracter del archivo
-	mov EAX, sys_read
-	mov EBX, [fhandler]
-	mov ECX, fchar
-	mov EDX, 1
+	mov EAX, sys_read 	; sys_call = sys_exit
+	mov EBX, [fhandler]	; EBX contiene el descriptor del archivo.
+	mov ECX, fchar 		; ECX contiene la dirección en memoria en donde se guardará los bytes leídos del archivo.
+	mov EDX, 1		; EDX coniene la cantidad de bytes a leer.
 	int 0x80
+	
+	; Si EAX es mayor o igual a 0, esto representa la cantidad de bytes leídos en el archivo.
+	; Si EAX es menor a 0, este valor representa un error particular, sea cual sea el error nuestro programa
+	; realiza una llamada al sistema con sys_exit notificando el error 'exit_fail_inputfile'.
 
-	; Guarda el valor del caracter en el registro ESI
+
+	; Comprobamos si hay error en la lectura del archivo o si este no lleyó ningún byte (llegó al final del archivo).
 	cmp EAX, 0
 	je .eof
+	jl .error_lectura
 
+	; Guarda el valor del caracter en el registro ESI
 	mov ESI, [fchar] ; ojo con esto, puede llegar a estar mal
 	jmp .salir
 	
 	.eof:
-	mov ESI, deteccion_eof
+		mov ESI, deteccion_eof
+		jmp .salir
+
+
+	.error_lectura:
+		push exit_fail_inputfile 	; pasamos por parámetro el número de error.
+		jmp salir
+
 
 	.salir:
-	; Restablece el valor de los registros
-	pop EDX
-	pop ECX
-	pop EBX
-	pop EAX
+		; Restablece el valor de los registros
+		pop EDX
+		pop ECX
+		pop EBX
+		pop EAX
 
-	; Regresa al metodo que invoco a este 
-	ret
+		; Regresa al metodo que invoco a este 
+		ret
 
 
 
@@ -147,47 +161,49 @@ imprimir_numero:
 
 	mov DL, 10	; Lo usamos como constante
 	mov EBX, 0	; Inicializamos en 0
-	.casorecursivo:
-		div DL			; Dividimos el numero por 10
-		mov BL, AH		; Nos quedamos con el modulo de la division, es decir, el digito menos significativo
-		add BL, ascii_zero	; Al digito menos significativo le sumamos el codigo ascii del 0 para convertirlo en un caracter.
+	; ATENCIÓN ESTE ALGORITMO NO FUNCIONA CON NÚMEROS ENTEROS MAYORES A 1279, HABRÍA QUE MODIFICAR DIV POR OTRA INSTRUCCIÓN, VER LA TABLA.
 
-		mov DH, AL
-		mov EAX, 0
-		mov AL, DH		; Hacemos EAX = EAX / 10 
+	.caso_recursivo:
+		div DL			; Dividimos el numero por 10
+		mov BL, AH		; Nos quedamos con el modulo de la division, es decir, el digito menos significativo del número.
+		add BL, ascii_zero	; Al digito menos significativo le sumamos el código ascii del número 0 para convertirlo en un caracter.
 		push EBX		; Guardamos el caracter en la pila
 
+		mov DH, AL		; Colocamos en DH el resultado de EAX/10
+		mov EAX, 0		; Ponemos todos los bits de EAX en 0.
+		mov AL, DH		; Hacemos EAX = EAX / 10 
+
 		cmp AL, 0		; Si el resultado de la division es mayor que cero, volver
-		jne .casorecursivo
+		jne .caso_recursivo
 	
-	mov EBX, [fhandlerout]
 	mov EDX, 1
 
-	.imprimirrecursivo
+	.imprimir_recursivo:
 		pop ECX
 		cmp ECX, 0
-		je .salir		; Si encontramos el delimitador, salimos del metodo
+		je .imprimir_espacio	; Si encontramos el delimitador, salimos del metodo
 		
-		mov EAX, sys_write	; Reconfiguramos el registro EAX el cual fue modificado en la llamada al sistema.
-		mov [fchar], CL
-		mov ECX, fchar
-		int 0x80
+		mov [fchar], CL		; guardamos en fchar el caracter que obtuvimos de la pila.
+		mov ECX, fchar		; Ponemos en ECX la dirección en memoria que almacena el caracter leído en la pila.
+		call imprimir		
 
-		jmp .imprimirrecursivo
+		jmp .imprimir_recursivo
 
-	.salir
+	.imprimir_espacio:
+		mov CL, 0x20		; colocamos en CL el código ascii del espacio ' '.
+		mov [fchar], CL		; ponemos en fchar el código ascii del espacio ' '.
+		mov ECX, fchar		; ponemos en ECX la dirección de memoria que contiene el caracter a imprimir, en este caso el espacio.
+		; Notar que EDX ya es igual 1
+		call imprimir		; delegamos en la rutina que imprimir en el archivo con el descriptor almacenado en 'fhandlerout'.
+		jmp .salir
 
-	mov EAX, sys_write
-	mov CL, 0x20
-	mov [fchar], CL
-	mov ECX, fchar
-	int 0x80
+	
+	.salir:
+		pop EDX
+		pop ECX
+		pop EBX	; Restablecemos el valor del registro EBX
 
-	pop EDX
-	pop ECX
-	pop EBX	; Restablecemos el valor del registro EBX
-
-	ret
+		ret
 
 
 
@@ -428,22 +444,33 @@ calcular_metricas:
 	ret
 
 
-
-imprimir_stdout: ; asume que ECX y EDX tienen los valores válidos.
+; Imprime en el archivo cuyo descriptor está almacenado en 'fhandlerout'.
+imprimir: ; asume que ECX y EDX tienen los valores válidos.
 	push EAX
 	push EBX 
 	; salvamos los datos de los registros a utilizar
 
 	mov EAX, sys_write	; sys_call = sys_write
-	mov EBX, stdout		; se coloca como descriptor del archivo al stdout
+	mov EBX, [fhandlerout]	; se coloca el descriptor del archivo.
 	int 0x80
 
-	; restablecemos los valores de los registos utilizados
-	pop EBX
-	pop EAX
+				; Evaluamos si la llamada al sistema retornó un error en EAX.
+	cmp EAX, 0 		; Si EAX es menor a 0 entonces se produjo un error.
+	jge .salir
+		
 
-	; Vuelve al metodo que llamo
-	ret
+	.error:
+		push exit_fail_outputfile
+		jmp salir
+
+
+	.salir:
+		; restablecemos los valores de los registos utilizados
+		pop EBX
+		pop EAX
+
+		; Vuelve al metodo que llamo
+		ret
 
 
 
@@ -462,19 +489,25 @@ crear_arch_temp:
 	mov ECX, 0777; permisos del archivo creado.
 	int 0x80
 
-	; falta controlar que eax sea mayor a 0.
+	; Controlamos que la llamada al sistema no haya retornado un error.
+	cmp EAX, 0
+	jge .salir
 
-	
-	; Guarda la direccion del archivo en 'fhandler'
-	mov [fhandler], EAX
+	.error:
+		push exit_fail_inputfile
+		jmp salir ; realizamos la llamada al sistema sys_exit con el error correspondiente.
 
-	; Reestablecer el valor de los registros
-	pop ECX
-	pop EBX
-	pop EAX
+	.salir
+		; Guarda la direccion del archivo en 'fhandler'
+		mov [fhandler], EAX
 
-	; Volver al que llamo
-	ret
+		; Reestablecer el valor de los registros
+		pop ECX
+		pop EBX
+		pop EAX
+
+		; Volver al que llamo
+		ret
 
 
 ; Modo consola entrada, consola salida.
@@ -508,6 +541,7 @@ consEntrada_consSalida:
 					; por lo cual el read retornará 0 en EAX.
 
 		je .fin_loop		; Como se ingresó ctrl+d finalizamos el loop.
+		jl .readfile_error	; Si retornó un error menor a 0 entonces se produjo un error en la lectura.
 
 		mov CL, BYTE[ECX]	; Obtener el caracter leido en CL
 
@@ -541,19 +575,23 @@ consEntrada_consSalida:
 		mov EDX, 0777
 		int 0x80
 
-
-		; asumimos que eax es mayor a 0
-
+		cmp EAX, 0
+		jl .openfile_error
+		
 		mov [fhandler], EAX
 
 		call calcular_metricas
-	
-
 		call cerrar_archivo
 		call borrar_arch_temp
 
 		push exit_success
 		jmp salir
+
+	.openfile_error:
+		jmp .salirFracaso
+
+	.readfile_error:
+		jmp .salirFracaso
 
 	; Se ingresaron mas caracteres de los permitidos (buffer overflow)
 	.bufferOverflow:
@@ -565,7 +603,7 @@ consEntrada_consSalida:
 	.salirFracaso
 		call cerrar_archivo	; Cerrar el archivo temporal
 		call borrar_arch_temp	; Borrarlo
-		push exit_fail
+		push exit_fail_inputfile
 		jmp salir
 
 
@@ -588,6 +626,7 @@ append_arch_temp:
 	push EBX
 	push ECX
 	push EDX
+	
 
 	; Escribir en el archivo el buffer
 	mov EAX, sys_write
@@ -596,14 +635,22 @@ append_arch_temp:
 	mov EDX, [flen]	
 	int 0x80
 
-	; Restaurar el valor de los registros
-	pop EDX
-	pop ECX
-	pop EBX
-	pop EAX
+	cmp EAX, 0
+	jge .salir 
 
-	;  Regresa a la instrucción posterior de la invocación de 'append_arch_temp'.
-	ret
+	.error:
+		push exit_fail_inputfile
+		jmp salir
+
+	.salir:
+		; Restaurar el valor de los registros
+		pop EDX
+		pop ECX
+		pop EBX
+		pop EAX
+
+		;  Regresa a la instrucción posterior de la invocación de 'append_arch_temp'.
+		ret
 
 
 
@@ -618,12 +665,20 @@ cerrar_archivo:
 	mov EBX, [fhandler] 
 	int 0x80
 
-	; Restablecer el valor de los registros
-	pop EBX
-	pop EAX
+	cmp EAX, 0
+	je .salir
 
-	; Regresa a la instrucción posterior de la invocación de 'cerrar_arch_temp'.
-	ret
+	.error:
+		push exit_fail_inputfile
+		jmp salir
+
+	.salir:
+		; Restablecer el valor de los registros
+		pop EBX
+		pop EAX
+
+		; Regresa a la instrucción posterior de la invocación de 'cerrar_arch_temp'.
+		ret
 
 
 
@@ -640,12 +695,20 @@ borrar_arch_temp:
 	mov EBX, arch_temp
 	int 0x80
 
-	; Devolver el valor de los registros.
-	pop EBX
-	pop EAX
+	cmp EAX, 0
+	je .salir
 
-	; Volver al que llamo
-	ret
+	.error:
+		push exit_fail_inputfile
+		jmp salir
+
+	.salir:
+		; Devolver el valor de los registros.
+		pop EBX
+		pop EAX
+
+		; Volver al que llamo
+		ret
 
 
 
@@ -657,25 +720,32 @@ archEntrada_consSalida:
 	mov EDX, 0777	; Permisos
 	int 0x80
 
-	; Guardar la referencia al archivo en fhandler
+	cmp EAX, 0
+	jl .error_entrada
+
+	; Guarda el descriptor del archivo en fhandler
 	mov [fhandler], EAX
 
-	pop EBX; Cargamos el segundo argumento
-	; Abrir el archivo pasado por segundo parametro (para la salida)
-	mov EAX, sys_open
-	mov ECX, 0
-	mov EDX, 0777
-	int 0x80
-	; Cargar la referencia a la consola en fhandlerout
+	; Cargar el descriptor del stdout en fhandlerout
 	mov EAX, stdout
 	mov [fhandlerout], EAX
 
 	; Calcular las metricas
 	call calcular_metricas
+	jmp .salir_exitosamente
 
-	; Finalizar exitosamente
-	push exit_success
-	jmp salir
+	.error_entrada:
+		push exit_fail_inputfile
+		jmp salir
+	
+	.error_salida:
+		push exit_fail_outputfile
+		jmp salir
+
+	.salir_exitosamente:
+		; Finalizar exitosamente
+		push exit_success
+		jmp salir
 
 	
 	
@@ -684,33 +754,49 @@ archEntrada_consSalida:
 archEntrada_archSalida:
 	push ECX	; Guardamos el parametro ECX
 
-	; Abrir el archivo pasado por parametro
+	; Abrir el archivo de entrada pasado por parametro
 	mov EAX, sys_open
 	mov ECX, 0	; Modo solo lectura
 	mov EDX, 0777	; Permisos
 	int 0x80
 
-	; Guardar la referencia al archivo en fhandler
+	cmp EAX, 0
+	jle .error_entrada
+
+	; Guarda el descriptor del archivo en fhandler
 	mov [fhandler], EAX
 
 	pop EBX		; Recuperamos el parametro ECX
 
-	; Abrir el archivo pasado por parametro
+	; Abrir el archivo salida pasado por parametro
 	mov EAX, sys_open
 	mov ECX, 0x241	; Modo O_CREAT | O_TRUNC | O_WRONLY => Si no existe se crea y al escribir sobre un archivo ya existente primero borra todo su contenido.
 	; Ademas abre el archivo en modo escritura.
 	mov EDX, 0777	; Permisos
 	int 0x80
 
-	; Guardar la referencia al archivo en fhandler
+	cmp EAX, 0
+	jle .error_salida
+
+	; Guardar el descriptor del archivo en fhandler
 	mov [fhandlerout], EAX
 
 	; Calcular las metricas
 	call calcular_metricas
+	jmp .salir_exitosamente
 
-	; Finalizar exitosamente
-	push exit_success
-	jmp salir
+	.error_entrada:
+		push exit_fail_inputfile
+		jmp salir
+	
+	.error_salida:
+		push exit_fail_outputfile
+		jmp salir
+
+	.salir_exitosamente:
+		; Finalizar exitosamente
+		push exit_success
+		jmp salir
 
 
 
@@ -752,7 +838,11 @@ verificar_ayuda:
 mostrar_ayuda:
 	mov ECX, mensaje_ayuda
 	mov EDX, longitud_ayuda
-	call imprimir_stdout
+
+	mov EAX, stdout
+	mov [fhandler], EAX 		; Colocamos como descriptor stdout para que se imprima por pantalla.
+	call imprimir
+
 	push exit_success
 	jmp salir
 
@@ -767,7 +857,7 @@ _start:
 
 	; evaluamos si estamos en el caso de -h
 	; tenemos más de un parámetro.
-	pop EBX		; capturamos la dirección en memoria del segundo argumento.
+	pop EBX		; capturamos la dirección en memoria del primer argumento, sin contar el nombre del programa como uno.
 	jmp verificar_ayuda
 
 	son_metricas:
