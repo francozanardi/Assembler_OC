@@ -724,7 +724,8 @@ archEntrada_archSalida:
 
 	; Abrir el archivo pasado por parametro
 	mov EAX, sys_open
-	mov ECX, 0x41	; Modo (solo escritura OR crear ; falta agregar el truncate ya que sino, cuando el archivo esta creado se sobrescribe lo utilizado pero no se borra lo que no se utiliza.)
+	mov ECX, 0x241	; Modo O_CREAT | O_TRUNC | O_WRONLY => Si no existe se crea y al escribir sobre un archivo ya existente primero borra todo su contenido.
+	; Ademas abre el archivo en modo escritura.
 	mov EDX, 0777	; Permisos
 	int 0x80
 
