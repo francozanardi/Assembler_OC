@@ -11,6 +11,9 @@
 ; ---------------------------------------------------------------------------------------------------------------------------------------------------
 
 
+
+
+
 %define sys_restart_syscall	0x00
 %define sys_exit		0x01
 %define sys_fork		0x02
@@ -37,8 +40,20 @@
 
 %define deteccion_eof		0x100
 
-%define max_len_linea		100
-%define max_lineas		100
+%define max_len_linea		1000
+%define max_lineas		1000
+
+; Convenciones posibles:
+;  a) Una linea VACIA que contenga un salto de linea (es decir: \n\n) cuenta como linea.
+;  b) Para que una linea cuente como tal, debe tener AL MENOS un caracter (de cualquier tipo) seguido de un salto de linea.
+;
+; De acuerdo a la convencion tomada, reemplazar la siguiente macro con el valor indicado:
+;  a) .linea
+;  b) .basura_sin_parrafo
+;
+%define interpretacion_lineas	.linea
+
+
 
 
 
@@ -63,13 +78,25 @@ section .text
 	global _start
 
 
+
+
+
 salir: 
 	mov EAX, sys_exit	; sys_call = sys_exit
 	pop EBX			; obtenemos el estado de salida, si hay error o no.
 	int 0x80
 
 
-; Asume que ESI contiene un caracter, devuelve 1 si es una letra, 0 en caso contrario.
+
+
+
+;
+; Input:
+;	ESI - Un caracter
+;
+; Output:
+;	EDI - 1 si el caracter es una letra, 0 en caso contrario
+;
 es_letra:
 	cmp ESI, 65 ; 'A'
 	jl .no_es_letra
@@ -85,14 +112,73 @@ es_letra:
 
 
 	.no_es_letra:
-		mov ESI, 0
+		mov EDI, 0
 		jmp .salir
 
 	.es_letra:
-		mov ESI, 1
+		mov EDI, 1
 
 	.salir:
 		ret
+
+
+
+
+
+;
+; Input:
+;	ESI - Un caracter
+;
+; Output
+;	EDI - 1 si el caracter es delimitador, 0 en caso contrario
+;
+es_delimitador:
+	cmp ESI, 32 ; ' '
+	je .es_delimitador
+
+	cmp ESI, 9 ; '\t'
+	je .es_delimitador
+
+	cmp ESI, 46 ; '.'
+	je .es_delimitador
+	
+	cmp ESI, 44 ; ','
+	je .es_delimitador
+
+	cmp ESI, 58 ; ':'
+	je .es_delimitador
+
+	cmp ESI, 59 ; ';'
+	je .es_delimitador
+
+	cmp ESI, 63 ; '?'
+	je .es_delimitador
+
+	cmp ESI, 33 ; '!'
+	je .es_delimitador
+
+	cmp ESI, 41 ; ')'
+	je .es_delimitador
+
+	cmp ESI, 34 ; '"'
+	je .es_delimitador
+
+	cmp ESI, 39 ; '''
+	je .es_delimitador
+
+
+
+	; No es delimitador
+	mov EDI, 0
+	jmp .salir
+
+	.es_delimitador:
+	mov EDI, 1
+
+	.salir:
+		ret
+
+
 
 
 
@@ -137,7 +223,6 @@ leer_caracter:
 		push exit_fail_inputfile 	; pasamos por parámetro el número de error.
 		jmp salir
 
-
 	.salir:
 		; Restablece el valor de los registros
 		pop EDX
@@ -150,54 +235,102 @@ leer_caracter:
 
 
 
+
+
+; Division manual, para evitar el problema de que al utilizar div solo se puede trabajar con numeros pequenos
+;
+; Input:
+;	EAX - Dividendo
+;	EBX - Divisor
+;
+; Output:
+;	EAX - Cociente
+;	EBX - Resto
+;
+division_por_resta:
+	push ECX	; Preservamos el valor del registro ECX
+
+	mov ECX, 0
+	
+	.loop:
+		cmp EAX, EBX	; Si el dividendo es menor que el divisor, terminamos
+		jl .fin
+
+		sub EAX, EBX	; Si el dividendo es mayor o igual que el divisor, restarle el divisor
+		inc ECX		; Llevar la cuenta de cuentas veces entra el divisor en el dividendo.
+
+		jmp .loop
+	
+	.fin
+		mov EBX, EAX	; EBX = Resto
+		mov EAX, ECX	; EAX = Cociente
+
+	pop ECX		; Restauramos el valor del registro ECX
+
+	ret
+
+
+
+
+
 ; Recibe un numero en EAX y lo imprime en 'fdescriptor_out'
 imprimir_numero:
-	push EBX; Preservamos el valor del registro EBX
+	; Preservamos el valor de los registros, utilizando la pila
+	push EBX
 	push ECX
 	push EDX
 
-
-	push 0	; Delimitador para saber cuando dejar de desapilar
-
-	mov DL, 10	; Lo usamos como constante
-	mov EBX, 0	; Inicializamos en 0
-	; ATENCIÓN ESTE ALGORITMO NO FUNCIONA CON NÚMEROS ENTEROS MAYORES A 1279, HABRÍA QUE MODIFICAR DIV POR OTRA INSTRUCCIÓN, VER LA TABLA.
-
-	.caso_recursivo:
-		div DL			; Dividimos el numero por 10
-		mov BL, AH		; Nos quedamos con el modulo de la division, es decir, el digito menos significativo del número.
-		add BL, ascii_zero	; Al digito menos significativo le sumamos el código ascii del número 0 para convertirlo en un caracter.
-		push EBX		; Guardamos el caracter en la pila
-
-		mov DH, AL		; Colocamos en DH el resultado de EAX/10
-		mov EAX, 0		; Ponemos todos los bits de EAX en 0.
-		mov AL, DH		; Hacemos EAX = EAX / 10 
-
-		cmp AL, 0		; Si el resultado de la division es mayor que cero, volver
-		jne .caso_recursivo
+	; Ingresamos un delimitador en la pila, para saber cuando dejar de desapilar.
+	push 0
 	
-	mov EDX, 1
+	mov DL, 10	; Lo usamos como constante
+;	mov EBX, 0	; Inicializamos en 0
+
+	;
+	; ATENCIÓN ESTE ALGORITMO NO FUNCIONA CON NÚMEROS ENTEROS MAYORES A 1279, HABRÍA QUE MODIFICAR DIV POR OTRA INSTRUCCIÓN, VER LA TABLA.
+	;
+	.caso_recursivo:
+		mov EBX, 10
+		call division_por_resta	; produce: EAX = EAX / EBX,   EBX = EAX % EBX
+
+		add EBX, ascii_zero	; Agregamos el ultimo caracter caracter a la pila, transformado a ASCII
+		push EBX
+
+		cmp EAX, 0		; Si el resultado de la division es mayor que cero, volver
+		jne .caso_recursivo
+;		div DL			; Dividimos el numero por 10
+;		mov BL, AH		; Nos quedamos con el modulo de la division, es decir, el digito menos significativo del número.
+;		add BL, ascii_zero	; Al digito menos significativo le sumamos el código ascii del número 0 para convertirlo en un caracter.
+;		push EBX		; Guardamos el caracter en la pila
+;
+;		mov DH, AL		; Colocamos en DH el resultado de EAX/10
+;		mov EAX, 0		; Ponemos todos los bits de EAX en 0.
+;		mov AL, DH		; Hacemos EAX = EAX / 10 
+;
+;		cmp AL, 0		; Si el resultado de la division es mayor que cero, volver
+;		jne .caso_recursivo
+	
+
+	mov EDX, 1			; EDX es la cantidad de bytes a imprimir, queda establecido aqui ya que las siguientes instrucciones lo usaran.
 
 	.imprimir_recursivo:
-		pop ECX
-		cmp ECX, 0
-		je .imprimir_espacio	; Si encontramos el delimitador, salimos del metodo
+		pop ECX			; Obtenemos el numero (en formato ascii) del tope de la pila
+		cmp ECX, 0		; En caso de que sea el delimitador, salimos del metodo
+		je .imprimir_espacio
 		
-		mov [fchar], CL		; guardamos en fchar el caracter que obtuvimos de la pila.
+		mov [fchar], CL		; Guardamos en fchar el caracter que obtuvimos de la pila.
 		mov ECX, fchar		; Ponemos en ECX la dirección en memoria que almacena el caracter leído en la pila.
 		call imprimir		
 
 		jmp .imprimir_recursivo
 
 	.imprimir_espacio:
-		mov CL, 0x20		; colocamos en CL el código ascii del espacio ' '.
-		mov [fchar], CL		; ponemos en fchar el código ascii del espacio ' '.
-		mov ECX, fchar		; ponemos en ECX la dirección de memoria que contiene el caracter a imprimir, en este caso el espacio.
-		; Notar que EDX ya es igual 1
-		call imprimir		; delegamos en la rutina que imprimir en el archivo con el descriptor almacenado en 'fdescriptor_out'.
+		mov CL, 0x20		; Colocamos en CL el código ascii del espacio ' '.
+		mov [fchar], CL		; Ponemos en fchar el código ascii del espacio ' '.
+		mov ECX, fchar		; Ponemos en ECX la dirección de memoria que contiene el caracter a imprimir, en este caso el espacio.
+		call imprimir		; Delegamos en la rutina que imprimir en el archivo con el descriptor almacenado en 'fdescriptor_out'.
 		jmp .salir
 
-	
 	.salir:
 		pop EDX
 		pop ECX
@@ -207,15 +340,16 @@ imprimir_numero:
 
 
 
-; Se asume que recibe los siguientes datos en los registros indicados:
+
+
+; Imprime los resultados del calculo de las metricas. 
 ;
-;	EAX = cantidad de letras
-;	EBX = cantidad de palabras
-;	ECX = cantidad de lineas
-;	EDX = cantidad de parrafos
+; Input:
+;	EAX - cantidad de letras
+;	EBX - cantidad de palabras
+;	ECX - cantidad de lineas
+;	EDX - cantidad de parrafos
 ;
-; H = modulo
-; L = resultado division
 mostrar_resultados:
 	call imprimir_numero
 
@@ -232,9 +366,19 @@ mostrar_resultados:
 
 
 
-; Calcular metricas
+
+
 ;
-; Se asume que 'fdescriptor' ya tiene el descriptor del archivo de entrada y que 'fdescriptor_out' contiene el descriptor del archivo de salida.
+; calcular_metricas:
+;
+; Descripcion:
+;	Este metodo calcula las metricas del archivo de entrada, lo hace simulando un automata finito
+;	determinista, con la excepcion de que al llegar a cada uno de los estados realiza una operacion
+;	en concreta (aumenta algun contador).
+;
+; Input:
+;	'fdescriptor'		- Descriptor del archivo de entrada
+;	'fdescriptor_out'	- Descriptor del archivo de salida
 ; 
 calcular_metricas:
 	; Preservar el valor de los registros utilizando la pila
@@ -243,197 +387,276 @@ calcular_metricas:
 	push ECX
 	push EDX
 	push ESI
+	push EDI
 
+	; Inicializamos los contadores
 	mov EAX, 0	; Contador de letras
 	mov EBX, 0	; Contador de palabras
 	mov ECX, 0	; Contador de lineas
 	mov EDX, 0	; Contador de parrafos
 
 
-	basura_sin_parrafo:
+	.basura_sin_parrafo:
 		call leer_caracter
 
-		; IF input=EoF entonces ir al estado aceptador
+		; input = EOF
+		; Acepta la cadena.
 		cmp ESI, deteccion_eof
-		jne .seguir	; Si no es 0, entonces continuar con los otros casos
-		inc ECX		; Si es 0, actualizar los registros correspondientes
-		jmp aceptador
+		je .aceptador
 
-		.seguir:
-		; IF input=\n entonces ir al estado linea
+		; input = \n
+		; Ir al estado "linea"
 		cmp ESI, nln
-		je linea
+		je .linea
 
-		; IF input es letra entonces ir al estado letra
+		; input es letra
+		; Ir al estado "letra sin parrafo"
 		call es_letra
-		cmp ESI, 1
-		je letra
+		cmp EDI, 1
+		je .letra_sin_parrafo
 
-		; IF input es delimitador entonces volver a este mismo estado
-		jmp basura_sin_parrafo
-	
+		; input es delimitador
+		; Quedarse en este estado.
+		call es_delimitador
+		cmp EDI, 1
+		je .basura_sin_parrafo
 
-	letra:
+		; input es basura
+		; Quedarse en este estado.
+		jmp .basura_sin_parrafo
+
+
+	.letra_sin_parrafo:
 		call leer_caracter
 
-		inc EAX
+		inc EAX	; Sumar una letra
 
-		; IF input=EoF entonces ir al estado aceptador
+		; input = EOF
+		; Acepta la cadena.
 		cmp ESI, deteccion_eof
-		jne .seguir	; Si no es 0, entonces continuar con los otros casos
-		inc EBX		; Si es 0, actualizar los registros correspondientes
-		inc ECX
-		inc EDX
-		jmp aceptador
+		je .aceptador
 
-		.seguir:
-		; IF input=\n entonces ir al estado "parrafo, palabra y linea"
+		; input = \n
+		; Ir al estado "linea, parrafo, palabra"
 		cmp ESI, nln
-		je parrafo_palabra_linea
+		je .linea_parrafo_palabra
 
-		; IF input es letra entonces ir al estado "letra"
+		; input es letra
+		; Quedarse en este estado.
 		call es_letra
-		cmp ESI, 1
-		je letra
+		cmp EDI, 1
+		je .letra_sin_parrafo
 
-		; IF input es delimitador entonces ir al estado "palabra"
-		jmp palabra
+		; input es delimitador
+		; Ir al estado "palabra"
+		call es_delimitador
+		cmp EDI, 1
+		je .palabra
+
+		; input es basura
+		; Ir al estado "basura sin parrafo"
+		jmp .basura_sin_parrafo
 
 
-	linea:
+	.linea:
 		call leer_caracter
 
-		inc ECX
+		inc ECX ; Sumar una linea
 
-		; IF input=EoF entonces ir al estado aceptador
+		; input = EOF
+		; Acepta la cadena.
 		cmp ESI, deteccion_eof
-		jne .seguir	; Si no es 0, entonces continuar con los otros casos
-		inc ECX		; Si es 0, actualizar los registros correspondientes
-		jmp aceptador
+		je .aceptador
 
-		.seguir:
-		; IF input=\n entonces ir al estado "linea"
+		; input = \n
+		; Ir al estado "basura sin parrafo" o "linea" (leer convenciones)
 		cmp ESI, nln
-		je linea
+		je interpretacion_lineas
 
-		; IF input es letra entonces ir al estado "letra"
+		; input es letra
+		; Ir al estado "letra sin parrafo"
 		call es_letra
-		cmp ESI, 1
-		je letra
+		cmp EDI, 1
+		je .letra_sin_parrafo
 
-		; IF input es delimitador entonces ir al estado "basura sin parrafo"
-		jmp basura_sin_parrafo
+		; input es delimitador
+		; Ir al estado "basura sin parrafo"
+		call es_delimitador
+		cmp EDI, 1
+		je .basura_sin_parrafo
+
+		; input es basura
+		; Ir al estado "basura sin parrafo"
+		jmp .basura_sin_parrafo
 
 
-	palabra:
+	.linea_parrafo:
 		call leer_caracter
 
-		inc EBX
+		inc ECX ; Sumar una linea
+		inc EDX ; Sumar un parrafo
 
-		; IF input=EoF entonces ir al estado aceptador
+		; input = EOF
+		; Acepta la cadena.
 		cmp ESI, deteccion_eof
-		jne .seguir	; Si no es 0, entonces continuar con los otros casos
-		inc ECX		; Si es 0, actualizar los registros correspondientes
-		inc EDX
-		jmp aceptador
+		je .aceptador
 
-		.seguir:
-		; IF input=\n entonces ir al estado "parrafo y linea"
+		; input = \n
+		; Ir al estado "basura sin parrafo" o "linea" (leer convenciones)
 		cmp ESI, nln
-		je parrafo_linea
+		je interpretacion_lineas
 
-		; IF input es letra entonces ir al estado "letra"
+		; input es letra
+		; Ir al estado "letra sin parrafo"
 		call es_letra
-		cmp ESI, 1
-		je letra
+		cmp EDI, 1
+		je .letra_sin_parrafo
 
-		; IF input es delimitador entonces ir al estado "basura con parrafo"
-		jmp basura_con_parrafo
+		; input es delimitador
+		; Ir al estado "basura sin parrafo"
+		call es_delimitador
+		cmp EDI, 1
+		je .basura_sin_parrafo
+
+		; input es basura
+		; Ir al estado "basura sin parrafo"
+		jmp .basura_sin_parrafo
 
 
-	basura_con_parrafo:
+	.linea_parrafo_palabra:
 		call leer_caracter
 
-		; IF input=EoF entonces ir al estado aceptador
+		inc EBX	; Sumar una palabra
+		inc ECX ; Sumar una linea
+		inc EDX ; Sumar un parrafo
+
+		; input = EOF
+		; Acepta la cadena.
 		cmp ESI, deteccion_eof
-		jne .seguir	; Si no es 0, entonces continuar con los otros casos
-		inc ECX		; Si es 0, actualizar los registros correspondientes
-		inc EDX
-		jmp aceptador
+		je .aceptador
 
-		.seguir:
-		; IF input=\n entonces ir al estado "parrafo y linea"
+		; input = \n
+		; Ir al estado "basura sin parrafo" o "linea" (leer convenciones)
 		cmp ESI, nln
-		je parrafo_linea
+		je interpretacion_lineas
 
-		; IF input es letra entonces ir al estado "letra"
+		; input es letra
+		; Ir al estado "letra sin parrafo"
 		call es_letra
-		cmp ESI, 1
-		je letra
+		cmp EDI, 1
+		je .letra_sin_parrafo
 
-		; IF input es delimitador entonces volver a este mismo estade
-		jmp basura_con_parrafo
+		; input es delimitador
+		; Ir al estado "basura sin parrafo"
+		call es_delimitador
+		cmp EDI, 1
+		je .basura_sin_parrafo
+
+		; input es basura
+		; Ir al estado "basura sin parrafo"
+		jmp .basura_sin_parrafo
 
 
-	parrafo_palabra_linea:
+	.palabra:
 		call leer_caracter
 
-		inc EBX
-		inc ECX
-		inc EDX
+		inc EBX ; Sumar una palabra
 
-		; IF input=EoF entonces ir al estado aceptador
+		; input = EOF
+		; Acepta la cadena.
 		cmp ESI, deteccion_eof
-		jne .seguir	; Si no es 0, entonces continuar con los otros casos
-		inc ECX		; Si es 0, actualizar los registros correspondientes
-		jmp aceptador
+		je .aceptador
 
-		.seguir:
-		; IF input=\n entonces ir al estado "linea"
+		; input = \n
+		; Ir al estado "linea, parrafo"
 		cmp ESI, nln
-		je linea
+		je .linea_parrafo
 
-		; IF input es letra entonces ir al estado "letra"
+		; input es letra
+		; Ir al estado "letra con parrafo"
 		call es_letra
-		cmp ESI, 1
-		je letra
+		cmp EDI, 1
+		je .letra_con_parrafo
 
-		; IF input es delimitador entonces ir al estado "basura sin parrafo"
-		jmp basura_sin_parrafo
+		; input es delimitador
+		; Ir al estado "basura con parrafo"
+		call es_delimitador
+		cmp EDI, 1
+		je .basura_con_parrafo
+
+		; input es basura
+		; Ir al estado "basura con parrafo"
+		jmp .basura_con_parrafo
 
 
-	parrafo_linea:
+	.letra_con_parrafo:
 		call leer_caracter
 
-		inc ECX
-		inc EDX
+		inc EAX ; Sumar una letra
 
-		; IF input=EoF entonces ir al estado aceptador
+		; input = EOF
+		; Acepta la cadena.
 		cmp ESI, deteccion_eof
-		jne .seguir	; Si no es 0, entonces continuar con los otros casos
-		inc ECX		; Si es 0, actualizar los registros correspondientes
-		jmp aceptador
+		je .aceptador
 
-		.seguir:
-		; IF input=\n entonces ir al estado "linea"
+		; input = \n
+		; Ir al estado "linea, parrafo, palabra"
 		cmp ESI, nln
-		je linea
+		je .linea_parrafo_palabra
 
-		; IF input es letra entonces ir al estado "letra"
+		; input es letra
+		; Quedarse en el estado.
 		call es_letra
-		cmp ESI, 1
-		je letra
+		cmp EDI, 1
+		je .letra_con_parrafo
 
-		; IF input es delimitador entonces ir al estado "basura sin parrafo"
-		jmp basura_sin_parrafo
+		; input es delimitador
+		; Ir al estado "palabra"
+		call es_delimitador
+		cmp EDI, 1
+		je .palabra
+
+		; input es basura
+		; Ir al estado "basura con parrafo" 
+		jmp .basura_con_parrafo
 
 
+	.basura_con_parrafo:
+		call leer_caracter
 
-	aceptador:
+		; input = EOF
+		; Acepta la cadena.
+		cmp ESI, deteccion_eof
+		je .aceptador
+
+		; input = \n
+		; Ir al estado "linea, parrafo"
+		cmp ESI, nln
+		je .linea_parrafo
+
+		; input es letra
+		; Ir al estado "letra con parrafo"
+		call es_letra
+		cmp EDI, 1
+		je .letra_con_parrafo
+
+		; input es delimitador
+		; Quedarse en este estado.
+		call es_delimitador
+		cmp EDI, 1
+		je .basura_con_parrafo
+
+		; input es basura
+		; Quedarse en este estado.
+		jmp .basura_con_parrafo
+
+
+	.aceptador:
 		call mostrar_resultados
 	
 
 	; Restaurar los valores de los registros.
+	pop EDI
 	pop ESI
 	pop EDX
 	pop ECX
@@ -444,13 +667,22 @@ calcular_metricas:
 	ret
 
 
+
+
+
+;
 ; Imprime en el archivo cuyo descriptor está almacenado en 'fdescriptor_out'.
-imprimir: ; asume que ECX y EDX tienen los valores válidos.
+;
+; Input:
+;	ECX - Puntero a la cadena a escribir.
+;	EDX - Cantidad de caracteres a escribir.
+;
+imprimir:
+	; Guardamos los valores de los registros que utilizaremos
 	push EAX
 	push EBX 
-	; salvamos los datos de los registros a utilizar
 
-	mov EAX, sys_write	; sys_call = sys_write
+	mov EAX, sys_write		; sys_call = sys_write
 	mov EBX, [fdescriptor_out]	; se coloca el descriptor del archivo.
 	int 0x80
 
@@ -465,7 +697,7 @@ imprimir: ; asume que ECX y EDX tienen los valores válidos.
 
 
 	.salir:
-		; restablecemos los valores de los registos utilizados
+		; Restablecemos los valores de los registos utilizados
 		pop EBX
 		pop EAX
 
@@ -474,9 +706,12 @@ imprimir: ; asume que ECX y EDX tienen los valores válidos.
 
 
 
+
+;
 ; Crea el archivo temporal
 ;
 ; Deja guardado su descriptor en 'fdescriptor'
+;
 crear_arch_temp:
 	; Guardar los contenidos de los registros utilizados en la pila
 	push EAX
@@ -510,6 +745,10 @@ crear_arch_temp:
 		ret
 
 
+
+
+
+;
 ; Modo consola entrada, consola salida.
 ; El usuario debe escribir texto por consola (finalizando su input con Ctrl D), luego se calculan las métricas
 ; y por último se imprimen los resultados (también por consola).
@@ -522,19 +761,24 @@ consEntrada_consSalida:
 
 	; Bucle de lectura de caracteres
 	.loop:
-		mov EAX, sys_read	; Leer un caracter por consola.
+		; Leer un caracter por consola
+		mov EAX, sys_read
 		mov EBX, stdin
 		mov ECX, cadena		; Guardar en cadena + offset
-		add ECX, ESI		; Sumamos el offset.
+		add ECX, ESI		; Le sumamos el offset a cadena.
 		mov EDX, 1		; Leemos de a un caracter
 		int 0x80
 
 		inc ESI			; Aumentamos el contador de caracteres leidos.
 
+
+		; Verificar buffer overflow (las lineas tienen un maximo de caracteres posibles)
 		cmp ESI, max_len_linea	; Si el contador de caracteres es igual al maximo posible, quiere decir que
 					; ya nos desbordamos del buffer.
 		je .bufferOverflow
 
+
+		; Verificar que si se llego a EoF o si hubo error en la lectura.
 		cmp EAX, 0		; Si el read leyó 0 bytes, entonces signfica que el usuario escribió <ctrl+d>
 					; sin ningún byte para procesar. Es decir, el usuario escribió caracteres seguidos de <ctrl+d> (o <enter>)
 					; y luego de ello escribió <ctrl+d> por lo que el programa recibió en la última linea 0 bytes para procesar,
@@ -543,18 +787,22 @@ consEntrada_consSalida:
 		je .fin_loop		; Como se ingresó ctrl+d finalizamos el loop.
 		jl .readfile_error	; Si retornó un error menor a 0 entonces se produjo un error en la lectura.
 
+
+		; Continua el programa (lectura exitosa, sin EoF ni overflow):
 		mov CL, BYTE[ECX]	; Obtener el caracter leido en CL
 
-		; IF: Si el usuario ingreso un salto de linea
-		cmp CL, nln
-		jne .loop		; Saltar al bloque ELSE
 
-		; Bloque THEN, El usuario ingreso un salto de linea, vamos a escribir en un archivo temporal
+		; Si el usuario NO ingreso un salto de linea, volver a loop.
+		cmp CL, nln
+		jne .loop		; En cambio, si lo leyo, continuar la ejecucion del bucle.
+
+
+		; El usuario ingreso un salto de linea. 
 		inc EDI				; Aumenta el contador de lineas
 		call escribir_linea_buffer	;
 		cmp EDI, max_lineas		; Verificamos que el archivo no se haya excedido del maximo de lineas
 		je .demasiadasLineas		; En caso de exceso, terminacion erronea
-		jne .loop
+		jne .loop			; Si no hubo error, continuar la ejecucion del bucle.
 	
 
 	.fin_loop:
@@ -563,7 +811,7 @@ consEntrada_consSalida:
 		call escribir_linea_buffer
 	
 		mov AL, stdout
-		mov [fdescriptor_out], AL 		; esto puede causar problemas. AL 1 byte [fdescriptor_out] son 4bytes, solo se reemplaza el primer byte, creo.
+		mov [fdescriptor_out], AL 	; esto puede causar problemas. AL 1 byte [fdescriptor_out] son 4bytes, solo se reemplaza el primer byte, creo.
 
 						; No veo necesario cerrar y abrir de nuevo el archivo temporal, el descriptor seguirá siendo el mismo.
 		call cerrar_archivo
@@ -597,6 +845,7 @@ consEntrada_consSalida:
 	.bufferOverflow:
 		jmp .salirFracaso
 	
+	; Se ingresaron mas lineas de las permitidas
 	.demasiadasLineas:
 		jmp .salirFracaso
 	
@@ -607,7 +856,12 @@ consEntrada_consSalida:
 		jmp salir
 
 
+
+
+;
 ; Asume que 
+; ?????
+;
 escribir_linea_buffer:
 	mov [flen], ESI		; Guardar la longitud de la linea en 'flen'			
 	mov ESI, 0		; Resetear el contador de caracteres
@@ -617,9 +871,13 @@ escribir_linea_buffer:
 
 
 
-; Escribe el contenido de 'cadena' al final del archivo
+
 ;
-; Se asume que el descriptor del archivo esta en 'fdescriptor'
+; Escribe el contenido de 'cadena' al final del archivo temporal.
+;
+; Input
+;	'fdescriptor' - Contiene el descriptor del archivo temporal en el cual escribir.
+;
 append_arch_temp:
 	; Preservar el valor de los registros
 	push EAX
@@ -635,13 +893,16 @@ append_arch_temp:
 	mov EDX, [flen]	
 	int 0x80
 
+	; Comparamos si EAX < 0, o EAX >= 0
 	cmp EAX, 0
 	jge .salir 
 
+	; EAX < 0, terminacion anormal
 	.error:
 		push exit_fail_inputfile
 		jmp salir
 
+	; EAX = 0, terminacion exitosa
 	.salir:
 		; Restaurar el valor de los registros
 		pop EDX
@@ -654,24 +915,33 @@ append_arch_temp:
 
 
 
-; Cierrar el archivo cuyo descriptor está almacenado en fdescriptor.
+
+
+;
+; Cierrar el archivo especificado.
+;
+; Input:
+;	'fdescriptor' - Descriptor del archivo a cerrar.
+;
 cerrar_archivo:
 	; Guardar el contenido de los registros en la pila
 	push EAX
 	push EBX
 
 	; Cerrar el archivo
-	mov EAX, sys_close ; sys_call = sys_close
+	mov EAX, sys_close
 	mov EBX, [fdescriptor] 
 	int 0x80
 
 	cmp EAX, 0
 	je .salir
 
+	; Si EAX != 0, terminacion a normal.
 	.error:
 		push exit_fail_inputfile
 		jmp salir
 
+	; Si EAX == 0, terminacion exitosa.
 	.salir:
 		; Restablecer el valor de los registros
 		pop EBX
@@ -682,9 +952,14 @@ cerrar_archivo:
 
 
 
+
+
+;
 ; Borrar el archivo temporal
 ;
-; Asume que su descriptor esta guardado en 'fdescriptor' para cerrarlo
+; Input:
+;	'fdescriptor' - Descriptor del archivo temporal.
+;
 borrar_arch_temp:
 	; Guardar los contenidos de los registros utilizados en la pila
 	push EAX
@@ -698,10 +973,12 @@ borrar_arch_temp:
 	cmp EAX, 0
 	je .salir
 
+	; Si EAX != 0, terminacion anormal.
 	.error:
 		push exit_fail_inputfile
 		jmp salir
 
+	; Si EAX == 0, terminacion exitosa.
 	.salir:
 		; Devolver el valor de los registros.
 		pop EBX
@@ -712,7 +989,14 @@ borrar_arch_temp:
 
 
 
-; Recibe en EBX la direccion del archivo de entrada.
+
+
+;
+; Modo archivo de entrada, consola para la salida.
+;
+; Input:
+;	EBX - Direccion del archivo de entrada.
+;
 archEntrada_consSalida:
 	; Abrir el archivo pasado por parametro (para la entrada)
 	mov EAX, sys_open
@@ -720,8 +1004,11 @@ archEntrada_consSalida:
 	mov EDX, 0777	; Permisos
 	int 0x80
 
+
+	; Verificamos que no haya habido error al abrir el archivo.
 	cmp EAX, 0
 	jl .error_entrada
+
 
 	; Guarda el descriptor del archivo en fdescriptor
 	mov [fdescriptor], EAX
@@ -734,19 +1021,28 @@ archEntrada_consSalida:
 	call calcular_metricas
 	jmp .salir_exitosamente
 
+
+	; EAX < 0, terminacion anormal.
 	.error_entrada:
 		push exit_fail_inputfile
 		jmp salir
 
+	; EAX >= 0, terminacion exitosa.
 	.salir_exitosamente:
-		; Finalizar exitosamente
 		push exit_success
 		jmp salir
 
-	
-	
-; Recibe en EBX la direccion del archivo de entrada
-; Recibe en ECX la direccion del archivo de salida
+
+
+
+
+;
+; Modo archivo de entrada, archivo de salida.
+;
+; Input:
+;	EBX - Direccion del archivo de entrada.
+;	ECX - Direccion del archivo de salida.
+;
 archEntrada_archSalida:
 	push ECX	; Guardamos el parametro ECX
 
