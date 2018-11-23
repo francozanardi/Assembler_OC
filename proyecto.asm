@@ -14,40 +14,48 @@
 
 
 
-%define sys_restart_syscall	0x00
-%define sys_exit		0x01
-%define sys_fork		0x02
-%define sys_read		0x03
-%define sys_write		0x04
-%define sys_open		0x05
-%define sys_close		0x06
-%define sys_waitpid		0x07
-%define sys_creat		0x08
-%define sys_link		0x09
-%define sys_unlink		0x0A
+%define sys_restart_syscall		0x00
+%define sys_exit			0x01
+%define sys_fork			0x02
+%define sys_read			0x03
+%define sys_write			0x04
+%define sys_open			0x05
+%define sys_close			0x06
+%define sys_waitpid			0x07
+%define sys_creat			0x08
+%define sys_link			0x09
+%define sys_unlink			0x0A
 
-%define stdin			0x00
-%define stdout			0x01
-%define stderr			0x02
+%define stdin				0x00
+%define stdout				0x01
+%define stderr				0x02
 
-%define ascii_zero		0x30
-%define nln			0x0A
+%define todos_los_permisos		0777
 
-%define exit_success		0x00
-%define exit_fail_inputfile	0x01
-%define exit_fail_outputfile	0x02
-%define exit_fail		0x03
+%define O_TRUNC				0x200
+%define O_CREAT				0x040
+%define O_WRONLY			0x001
+%define O_RDONLY			0x000
 
-%define deteccion_eof		0x100
+%define ascii_zero			0x30
+%define nln				0x0A
+%define tab				0x09
 
-%define max_len_linea		1000
-%define max_lineas		1000
+%define exit_success			0x00
+%define exit_fail_inputfile		0x01
+%define exit_fail_outputfile		0x02
+%define exit_fail			0x03
+
+%define deteccion_eof			0x100
+
+%define max_len_linea			1000
+%define max_lineas			1000
 
 ; Convenciones posibles:
 ;  a) Una linea VACIA que contenga un salto de linea (es decir: \n\n) cuenta como linea.
 ;  b) Para que una linea cuente como tal, debe tener AL MENOS un caracter (de cualquier tipo) seguido de un salto de linea.
 ;
-; De acuerdo a la convencion tomada, reemplazar la siguiente macro con el valor indicado:
+; de acuerdo a la convencion tomada, reemplazar la siguiente macro con el valor indicado:
 ;  a) .linea
 ;  b) .basura_sin_parrafo
 ;
@@ -58,15 +66,43 @@
 
 
 section .data
-	mensaje_ayuda	db	"Esta es la ayuda.",nln
-	longitud_ayuda	EQU	$-mensaje_ayuda
+	mensaje_ayuda		db	"Calculador de Metricas.", nln
+				db	" - Proyecto para Organizacion de Computadoras, Segundo Cuatrimestre 2018", nln
+				db	" - Autores:", nln
+				db	tab, "VEGA, Maximiliano Nicolas", nln
+				db	tab, "ZANARDI, Franco Ivan", nln, nln
+				db	"Este programa calcula la cantidad de letras, palabras, lineas y parrafos de un texto.", nln, nln
+				db	"Uso: ./metricas [argumentos]", nln, nln,
+				db	"Argumentos:",  nln
+				db	"[-h]", tab, tab, tab, tab, tab,	"Muestra el menu de ayuda.",nln
+				db	"[archivo_entrada]", tab, tab, tab,	"Lee el archivo de texto especificado y calcula las metricas sobre el, imprime el resultado por pantalla.",nln
+				db	"[archivo_entrada archivo_salida]", tab,"Lee el archivo de entrada especificado, calcula las metricas sobre el, y guarda el resultado en el archivo de salida.",nln
+	longitud_ayuda		EQU	$-mensaje_ayuda
 
-	arch_temp	db	"metricas.tmp",0	; Caracter nulo al final
-	arch_temp_len	EQU	$-arch_temp
+	msg_res			db	nln, "Resultado del calculo de metricas:", nln
+	msg_res_len		EQU	$-msg_res
 
-	fdescriptor	dd	stdin
-	fdescriptor_out	dd	stdout
-	flen		dd	0
+	msg_letras		db	"Cantidad de letras: "
+	msg_letras_len		EQU	$-msg_letras
+
+	msg_palabras		db	nln, "Cantidad de palabras: "
+	msg_palabras_len	EQU	$-msg_palabras
+
+	msg_lineas		db	nln, "Cantidad de lineas: "
+	msg_lineas_len		EQU	$-msg_lineas
+
+	msg_parrafos		db	nln, "Cantidad de parrafos: "
+	msg_parrafos_len	EQU	$-msg_parrafos
+
+	msg_final		db	nln, nln
+	msg_final_len		EQU	$-msg_final
+
+	arch_temp		db	"metricas.tmp",0	; Caracter nulo al final
+	arch_temp_len		EQU	$-arch_temp
+
+	fdescriptor		dd	stdin
+	fdescriptor_out		dd	stdout
+	flen			dd	0
 
 
 section .bss
@@ -283,12 +319,6 @@ imprimir_numero:
 	; Ingresamos un delimitador en la pila, para saber cuando dejar de desapilar.
 	push 0
 	
-	mov DL, 10	; Lo usamos como constante
-;	mov EBX, 0	; Inicializamos en 0
-
-	;
-	; ATENCIÓN ESTE ALGORITMO NO FUNCIONA CON NÚMEROS ENTEROS MAYORES A 1279, HABRÍA QUE MODIFICAR DIV POR OTRA INSTRUCCIÓN, VER LA TABLA.
-	;
 	.caso_recursivo:
 		mov EBX, 10
 		call division_por_resta	; produce: EAX = EAX / EBX,   EBX = EAX % EBX
@@ -298,17 +328,6 @@ imprimir_numero:
 
 		cmp EAX, 0		; Si el resultado de la division es mayor que cero, volver
 		jne .caso_recursivo
-;		div DL			; Dividimos el numero por 10
-;		mov BL, AH		; Nos quedamos con el modulo de la division, es decir, el digito menos significativo del número.
-;		add BL, ascii_zero	; Al digito menos significativo le sumamos el código ascii del número 0 para convertirlo en un caracter.
-;		push EBX		; Guardamos el caracter en la pila
-;
-;		mov DH, AL		; Colocamos en DH el resultado de EAX/10
-;		mov EAX, 0		; Ponemos todos los bits de EAX en 0.
-;		mov AL, DH		; Hacemos EAX = EAX / 10 
-;
-;		cmp AL, 0		; Si el resultado de la division es mayor que cero, volver
-;		jne .caso_recursivo
 	
 
 	mov EDX, 1			; EDX es la cantidad de bytes a imprimir, queda establecido aqui ya que las siguientes instrucciones lo usaran.
@@ -351,17 +370,72 @@ imprimir_numero:
 ;	EDX - cantidad de parrafos
 ;
 mostrar_resultados:
+	; Preservar los valores de los registros
+	push ECX
+	push EDX
+	push ESI
+	push EDI
+
+	; Como los registros ECX y EDX contienen informacion que necesitamos, pero a la vez los usamos para imprimir por pantalla,
+	; movemos sus valores a registros auxiliares
+	mov ESI, ECX
+	mov EDI, EDX
+
+
+	; Imprimir mensaje inicial
+	mov ECX, msg_res
+	mov EDX, msg_res_len
+	call imprimir
+
+
+	; Imprimir mensaje para letras
+	mov ECX, msg_letras
+	mov EDX, msg_letras_len
+	call imprimir
+	; Imprimir cantidad de letras
 	call imprimir_numero
 
+
+	; Imprimir mensaje para palabras
+	mov ECX, msg_palabras
+	mov EDX, msg_palabras_len
+	call imprimir
+	; Cargar la cantidad de palabras en EAX e imprimirlo.
 	mov EAX, EBX
 	call imprimir_numero
 
-	mov EAX, ECX
+
+	; Imprimir mensaje para lineas
+	mov ECX, msg_lineas
+	mov EDX, msg_lineas_len
+	call imprimir
+	; Cargar la cantidad de lineas en EAX e imprimirlo.
+	mov EAX, ESI
 	call imprimir_numero
 
-	mov EAX, EDX
+
+	; Imprimir mensaje para parrafos
+	mov ECX, msg_parrafos
+	mov EDX, msg_parrafos_len
+	call imprimir
+	; Cargar la cantidad de parrafos en EAX e imprimirlo.
+	mov EAX, EDI
 	call imprimir_numero
-	
+
+
+	; Imprimir el mensaje final
+	mov ECX, msg_final
+	mov EDX, msg_final_len
+	call imprimir
+
+
+	; Restaurar los valores de los registros
+	pop EDI
+	pop ESI
+	pop EDX
+	pop ECX
+
+	; Continuar la ejecucion en el metodo que invoco a este.
 	ret
 
 
@@ -721,7 +795,7 @@ crear_arch_temp:
 	; Crear el archivo temporal
 	mov EAX, sys_creat
 	mov EBX, arch_temp
-	mov ECX, 0777; permisos del archivo creado.
+	mov ECX, todos_los_permisos
 	int 0x80
 
 	; Controlamos que la llamada al sistema no haya retornado un error.
@@ -819,8 +893,8 @@ consEntrada_consSalida:
 		; Abrimos el archivo nuevamente con modo solo lectura.
 		mov EAX, sys_open
 		mov EBX, arch_temp
-		mov ECX, 0		; solo lectura
-		mov EDX, 0777
+		mov ECX, O_RDONLY		; solo lectura
+		mov EDX, todos_los_permisos
 		int 0x80
 
 		cmp EAX, 0
@@ -860,7 +934,6 @@ consEntrada_consSalida:
 
 ;
 ; Asume que 
-; ?????
 ;
 escribir_linea_buffer:
 	mov [flen], ESI		; Guardar la longitud de la linea en 'flen'			
@@ -1000,8 +1073,8 @@ borrar_arch_temp:
 archEntrada_consSalida:
 	; Abrir el archivo pasado por parametro (para la entrada)
 	mov EAX, sys_open
-	mov ECX, 0	; Modo solo lectura
-	mov EDX, 0777	; Permisos
+	mov ECX, O_RDONLY		; Modo solo lectura
+	mov EDX, todos_los_permisos	; Permisos
 	int 0x80
 
 
@@ -1048,8 +1121,8 @@ archEntrada_archSalida:
 
 	; Abrir el archivo de entrada pasado por parametro
 	mov EAX, sys_open
-	mov ECX, 0	; Modo solo lectura
-	mov EDX, 0777	; Permisos
+	mov ECX, O_RDONLY	; Modo solo lectura
+	mov EDX, todos_los_permisos	; Permisos
 	int 0x80
 
 	cmp EAX, 0
@@ -1062,9 +1135,9 @@ archEntrada_archSalida:
 
 	; Abrir el archivo salida pasado por parametro
 	mov EAX, sys_open
-	mov ECX, 0x241	; Modo O_CREAT | O_TRUNC | O_WRONLY => Si no existe se crea y al escribir sobre un archivo ya existente primero borra todo su contenido.
+	mov ECX, O_CREAT | O_TRUNC | O_WRONLY  		; Modo O_CREAT | O_TRUNC | O_WRONLY => Si no existe se crea y al escribir sobre un archivo ya existente primero borra todo su contenido.
 	; Ademas abre el archivo en modo escritura.
-	mov EDX, 0777	; Permisos
+	mov EDX, todos_los_permisos	; Permisos
 	int 0x80
 
 	cmp EAX, 0
@@ -1093,40 +1166,50 @@ archEntrada_archSalida:
 
 
 
-; Verifica si el parámetro es el parámetro de ayuda
 ;
-; Asume que el registro EAX contiene la cantidad de argumentos recibidos al ejecutarse el programa.
-; Asume que el registro EBX contiene un puntero a un argumento string.
+; Verifica si el parámetro ingresado es el parámetro de ayuda
+;
+; Input:
+;	EAX - Cantidad de argumentos recibidos al ejecutarse el programa.
+;	EBX - Un puntero a un argumento string.
+;
+; Output:
+;	ESI - Devuelve 1 si hay que mostrar ayuda, 0 en caso contrario.
+;
 verificar_ayuda:
 	cmp BYTE[EBX], 45	; Verificamos si el primer caracter del segundo parametro es un '-'
-	jmp son_metricas	; sino es un gion definitivamente no era el parámetro '-h'
+	mov ESI, 0		; No es ayuda
+	jne .salir_ayuda
 
-	push exit_fail		; ponemos en la pila el posible error
-						; Este error se da cuando el segundo argumento no es estrictamente igual a "-h" (se admiten espacios luego y antes),
-						; también se produce si hay argumentos de sobra.
+	push exit_fail		; Ponemos en la pila el posible error (en caso que no sea exactamente "-h")
 
-	inc EBX				; apuntamos al siguiente caracter
-	cmp BYTE[EBX], 104	; comprobamos si el siguiente caracter es la 'h'
-	jne salir			; si el siguiente no era la h entonces el argumento no era '-h'.
-						; Notar que la pila ya tiene el número de error de salida.
-						; Finalizamos el programa con error porque asumimos que un archivo válido no puedo comenzar con '-'
+	inc EBX			; Apuntamos al siguiente caracter
+	cmp BYTE[EBX], 104	; Verificamos si es 'h'
+	jne salir		; Si el segundo caracter no es 'h' entonces el parametro no es exactamente "-h". Salir con error.
+				; Se asume que un archivo con nombre valido no empieza con el caracter "-".
 
 	; Una vez leido "-h" queda verificar que luego de la 'h' esté el caracter nulo '\0'
-	inc EBX				; Apuntamos al siguiente caracter
+	inc EBX			; Apuntamos al siguiente caracter
 	cmp BYTE[EBX], 0	; Verificamos si es el caracter nulo
-	jne salir			; En caso de que no fuese el caracter nulo, el parámetro es inválido (pues no es '-h')
+	jne salir		; En caso de que no fuese el caracter nulo, el parámetro es inválido (pues no es exactamente "-h"). Salir con error.
 
 	; Por último, en caso de ser válido el formato, la cantidad de parámetros debe ser 2 (el propio programa y '-h')
-	cmp EAX, 2			; Si hay más de 2 argumentos, es una ejecución inválida.
+	cmp EAX, 2		; Si hay más de 2 argumentos, es una ejecución inválida.
 	jne salir
 
-	pop ESI ; si no hubo error entonces descartamos el valor ingresado en la pila
+	; A esta altura estamos seguros de que el parametro "-h" es totalmente correcto.
+	pop ESI			; Quitamos el posible error de la pila
+	mov ESI, 1		; Es ayuda
 
-	je mostrar_ayuda ; Si es un espacio el último caracter entonces el parámetro era '-h ', procedemos a mostrar la ayuda.
+	.salir_ayuda:
+	ret
 
 
 
 
+;
+; Muestra la ayuda correspondiente al modo "-h" por pantalla.
+;
 mostrar_ayuda:
 	mov ECX, mensaje_ayuda
 	mov EDX, longitud_ayuda
@@ -1139,27 +1222,48 @@ mostrar_ayuda:
 	jmp salir
 
 
-	
+
+
+
+;
+; Punto de comienzo del programa
+;
 _start:
-	pop EAX ; cantidad de argumentos
-	pop EBX ; sacamos el nombre del programa
+	pop EAX ; Cantidad de argumentos
+	pop EBX ; Sacamos el nombre del programa
 
+
+	; ARGC = 1 -> Modo "consola entrada, consola salida"
 	cmp EAX, 1
-	je consEntrada_consSalida ; si no hay parámetros, nos dirigimos a una subrutina especifica.
+	je consEntrada_consSalida
 
-	; evaluamos si estamos en el caso de -h
-	; tenemos más de un parámetro.
-	pop EBX		; capturamos la dirección en memoria del primer argumento, sin contar el nombre del programa como uno.
-	jmp verificar_ayuda
+	; Si no hay un argumento, debe haber mas ...
+	pop EBX			; Capturamos el segundo argumento.
 
-	son_metricas:
-		cmp EAX, 2
-		je archEntrada_consSalida ; subrutina para actuar con un parámetro.
+	; ARGC = 2 -> Puede ser el modo "-h" o "archivo entrada, consola salida"
+	cmp EAX, 2
+	jne .mas_de_dos_arg
 
-		pop ECX
-		cmp EAX, 3
-		je archEntrada_archSalida ; subrutina para dos parámetros.
+	call verificar_ayuda	; Verificamos si el argumento es "-h"
+				; Devuelve en ESI un 1 en caso de que haya que mostrar ayuda, y un 0 en caso contrario.
+	; Modo ayuda: "-h"
+	cmp ESI, 1
+	je mostrar_ayuda
 
-		push exit_fail
-		jmp salir
+	; Modo "archivo entrada, consola salida"
+	jne archEntrada_consSalida ; Si ESI no es igual a 1, entonces es 0, lo que quiere decir que no es el modo ayuda, luego, debemos intentar con el modo archivo entrada, consola salida.
+
+
+	.mas_de_dos_arg:
+	pop ECX			; Capturamos el tercer argumento (recordemos que EBX contiene el segundo)
+
+
+	; ARGC = 3 -> Modo "archivo entrada, archivo salida"
+	cmp EAX, 3
+	je archEntrada_archSalida ; subrutina para dos parámetros.
+
+
+	; ARGC > 3 -> Argumentos invalidos.
+	push exit_fail
+	jmp salir
 
