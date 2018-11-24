@@ -107,7 +107,7 @@ section .data
 
 section .bss
 	cadena	resb	max_len_linea
-	fchar	resb	1
+	fchar	resd	1
 
 
 section .text
@@ -408,7 +408,7 @@ imprimir_numero:
 		cmp ECX, 0				; En caso de que sea el delimitador, salimos del metodo
 		je .imprimir_espacio
 		
-		mov [fchar], CL			; Guardamos en fchar el caracter que obtuvimos de la pila.
+		mov [fchar], ECX		; Guardamos en fchar el caracter que obtuvimos de la pila.
 		mov ECX, fchar			; Ponemos en ECX la dirección en memoria que almacena el caracter leído en la pila.
 		call imprimir			; Delegamos en la rutina que imprimir en el archivo con el descriptor almacenado en 'fdescriptor_out'.
 
@@ -417,8 +417,8 @@ imprimir_numero:
 	
 	; Luego de imprimir el número, imprimimos un espacio para separarlo de los siguientes números.
 	.imprimir_espacio:
-		mov CL, 0x20			; Colocamos en CL el código ascii del espacio ' '.
-		mov [fchar], CL			; Ponemos en fchar el código ascii del espacio ' '.
+		mov ECX, 0x20			; Colocamos en CL el código ascii del espacio ' '.
+		mov [fchar], ECX		; Ponemos en fchar el código ascii del espacio ' '.
 		mov ECX, fchar			; Ponemos en ECX la dirección de memoria que contiene el caracter a imprimir, en este caso el espacio.
 		call imprimir			; Delegamos en la rutina que imprimir en el archivo con el descriptor almacenado en 'fdescriptor_out'.
 		jmp .salir
@@ -1007,8 +1007,8 @@ consEntrada_consSalida:
 					; en la última linea, ya que se utilizará como offset.
 		call escribir_linea_buffer	; Escribe la última linea en el archivo temporal.
 	
-		mov AL, stdout
-		mov [fdescriptor_out], AL 	; WARD - Esto está mal. Porque [fdescriptor_out] tiene reservados 4 bytes y AL solo es 1 byte, por lo que solo se modifica 1 byte de [fdescriptor_out]
+		mov EAX, stdout
+		mov [fdescriptor_out], EAX
 
 		; Cerrar el archivo temporal (cuyo descriptor está guardado en 'fdescriptor')
 		call cerrar_archivo
